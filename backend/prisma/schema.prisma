@@ -1,0 +1,729 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum UserRole {
+  PARENT
+  CHILD
+}
+
+enum MissionCategory {
+  DAILY_CHORE
+  HABIT
+  EDUCATIONAL
+  CREATIVE
+  OUTDOOR
+  PHYSICAL
+}
+
+enum MissionStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum AssignmentStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum RecurrenceType {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum UnlockConditionType {
+  LEVEL_REACHED
+  XP_THRESHOLD
+  COIN_THRESHOLD
+  MISSION_COUNT
+  STREAK_DAYS
+  ACHIEVEMENT_EARNED
+  PROFILE_COMPLETED
+}
+
+enum SubscriptionTier {
+  FREE
+  PREMIUM
+  FAMILY_PLUS
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  PAST_DUE
+  TRIALING
+}
+
+// ==================== IDENTITY & ACCESS ====================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String?   @unique
+  passwordHash  String?
+  role          UserRole
+  familyId      String
+  family        Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  
+  // For child login (family code + PIN)
+  pin           String?
+  
+  parentProfile ParentProfile?
+  childProfile  ChildProfile?
+  
+  refreshTokens RefreshToken[]
+  notifications Notification[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+  isActive      Boolean   @default(true)
+  
+  @@index([familyId])
+  @@index([email])
+}
+
+model RefreshToken {
+  id          String   @id @default(cuid())
+  token       String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+  
+  @@index([userId])
+  @@index([token])
+}
+
+model Family {
+  id              String    @id @default(cuid())
+  name            String
+  inviteCode      String    @unique @default(cuid())
+  
+  users           User[]
+  rewards         Reward[]
+  subscription    Subscription?
+  auditLogs       AuditLog[]
+  
+  settings        Json      @default("{}")
+  timezone        String    @default("UTC")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([inviteCode])
+}
+
+model ParentProfile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  displayName     String
+  avatarUrl       String?
+  
+  missions        Mission[]
+  approvals       MissionApproval[]
+  
+  preferences     Json      @default("{}")
+  notificationSettings Json @default("{}")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model ChildProfile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  displayName     String
+  avatarUrl       String?
+  dateOfBirth     DateTime?
+  
+  hero            Hero?
+  assignments     MissionAssignment[]
+  submissions     MissionSubmission[]
+  achievements    ChildAchievement[]
+  inventory       ChildInventory[]
+  miniGameUnlocks MiniGameUnlock[]
+  rewardUnlocks   RewardUnlock[]
+  
+  // Subscribed mission themes
+  activeProfiles  ChildProfileTheme[]
+  
+  preferences     Json      @default("{}")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ==================== MISSION PROFILES & THEMES ====================
+
+model MissionProfileTheme {
+  id              String    @id @default(cuid())
+  slug            String    @unique
+  name            String
+  description     String
+  iconUrl         String?
+  color           String?   // Hex color for UI theming
+  
+  templates       MissionTemplate[]
+  childProfiles   ChildProfileTheme[]
+  
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)
+  
+  metadata        Json      @default("{}")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model ChildProfileTheme {
+  id              String    @id @default(cuid())
+  childProfileId  String
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  themeId         String
+  theme           MissionProfileTheme @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  
+  isActive        Boolean   @default(true)
+  enabledAt       DateTime  @default(now())
+  
+  @@unique([childProfileId, themeId])
+  @@index([childProfileId])
+  @@index([themeId])
+}
+
+model MissionTemplate {
+  id              String    @id @default(cuid())
+  themeId         String
+  theme           MissionProfileTheme @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  
+  title           String
+  description     String
+  instructions    String?
+  category        MissionCategory
+  
+  suggestedXp     Int       @default(10)
+  suggestedCoins  Int       @default(5)
+  
+  difficulty      Int       @default(1) // 1-5 scale
+  estimatedMinutes Int?
+  
+  ageMinimum      Int?
+  ageMaximum      Int?
+  
+  iconUrl         String?
+  tags            String[]  @default([])
+  
+  isActive        Boolean   @default(true)
+  isAiGenerated   Boolean   @default(false)
+  
+  missions        Mission[]
+  
+  metadata        Json      @default("{}")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([themeId])
+  @@index([category])
+}
+
+// ==================== MISSIONS ====================
+
+model Mission {
+  id              String    @id @default(cuid())
+  
+  // Creator
+  createdById     String
+  createdBy       ParentProfile @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  
+  // Optional template reference
+  templateId      String?
+  template        MissionTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  
+  title           String
+  description     String
+  instructions    String?
+  category        MissionCategory
+  
+  xpReward        Int       @default(10)
+  coinReward      Int       @default(5)
+  
+  // Optional badge/unlock on completion
+  badgeId         String?
+  unlockItemId    String?
+  
+  // Recurrence
+  recurrenceType  RecurrenceType @default(NONE)
+  recurrenceRule  Json?     // For complex recurrence patterns
+  
+  status          MissionStatus @default(ACTIVE)
+  
+  // Real-world reward link
+  realWorldRewardId String?
+  realWorldReward Reward?   @relation(fields: [realWorldRewardId], references: [id], onDelete: SetNull)
+  
+  assignments     MissionAssignment[]
+  
+  requiresEvidence Boolean  @default(false)
+  evidencePrompt  String?
+  
+  metadata        Json      @default("{}")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  archivedAt      DateTime?
+  
+  @@index([createdById])
+  @@index([status])
+  @@index([category])
+}
+
+model MissionAssignment {
+  id              String    @id @default(cuid())
+  
+  missionId       String
+  mission         Mission   @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  
+  childProfileId  String
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  
+  status          AssignmentStatus @default(PENDING)
+  
+  assignedAt      DateTime  @default(now())
+  dueAt           DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  // For recurring missions
+  recurrenceIndex Int       @default(0)
+  
+  submission      MissionSubmission?
+  
+  notes           String?
+  
+  @@unique([missionId, childProfileId, recurrenceIndex])
+  @@index([childProfileId])
+  @@index([status])
+  @@index([dueAt])
+}
+
+model MissionSubmission {
+  id              String    @id @default(cuid())
+  
+  assignmentId    String    @unique
+  assignment      MissionAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  
+  childProfileId  String
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  
+  submittedAt     DateTime  @default(now())
+  
+  // Evidence
+  notes           String?
+  photoUrls       String[]  @default([])
+  
+  approval        MissionApproval?
+  
+  @@index([childProfileId])
+}
+
+model MissionApproval {
+  id              String    @id @default(cuid())
+  
+  submissionId    String    @unique
+  submission      MissionSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  
+  approvedById    String
+  approvedBy      ParentProfile @relation(fields: [approvedById], references: [id], onDelete: Cascade)
+  
+  decision        ApprovalDecision
+  feedback        String?
+  
+  // Actual rewards granted (may differ from mission defaults)
+  xpAwarded       Int
+  coinsAwarded    Int
+  
+  decidedAt       DateTime  @default(now())
+  
+  @@index([approvedById])
+}
+
+// ==================== PROGRESSION ====================
+
+model Hero {
+  id              String    @id @default(cuid())
+  
+  childProfileId  String    @unique
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  
+  name            String    @default("Hero")
+  avatarType      String    @default("default")
+  
+  level           Int       @default(1)
+  currentXp       Int       @default(0)
+  totalXp         Int       @default(0)
+  coins           Int       @default(0)
+  totalCoinsEarned Int      @default(0)
+  
+  // Streak tracking
+  currentStreak   Int       @default(0)
+  longestStreak   Int       @default(0)
+  lastActivityAt  DateTime?
+  
+  stats           HeroStats[]
+  
+  // Equipped items
+  equippedItems   Json      @default("{}")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model HeroStats {
+  id              String    @id @default(cuid())
+  
+  heroId          String
+  hero            Hero      @relation(fields: [heroId], references: [id], onDelete: Cascade)
+  
+  // Snapshot date for historical tracking
+  date            DateTime  @default(now()) @db.Date
+  
+  missionsCompleted Int     @default(0)
+  xpEarned        Int       @default(0)
+  coinsEarned     Int       @default(0)
+  
+  // Category breakdown
+  categoryStats   Json      @default("{}")
+  
+  @@unique([heroId, date])
+  @@index([heroId])
+  @@index([date])
+}
+
+// ==================== ACHIEVEMENTS ====================
+
+model Achievement {
+  id              String    @id @default(cuid())
+  
+  slug            String    @unique
+  name            String
+  description     String
+  iconUrl         String?
+  
+  // Unlock condition
+  conditionType   UnlockConditionType
+  conditionValue  Int       // e.g., level 5, 100 XP, 10 missions
+  conditionMeta   Json?     // Additional condition parameters
+  
+  // Rewards for earning
+  xpReward        Int       @default(0)
+  coinReward      Int       @default(0)
+  unlockItemId    String?
+  
+  isSecret        Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  sortOrder       Int       @default(0)
+  
+  children        ChildAchievement[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model ChildAchievement {
+  id              String    @id @default(cuid())
+  
+  childProfileId  String
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  
+  achievementId   String
+  achievement     Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  
+  unlockedAt      DateTime  @default(now())
+  
+  // Progress tracking for partial achievements
+  currentProgress Int       @default(0)
+  isComplete      Boolean   @default(false)
+  
+  @@unique([childProfileId, achievementId])
+  @@index([childProfileId])
+}
+
+// ==================== MINI-GAMES ====================
+
+model MiniGame {
+  id              String    @id @default(cuid())
+  
+  slug            String    @unique
+  name            String
+  description     String
+  iconUrl         String?
+  thumbnailUrl    String?
+  
+  // Unlock condition
+  conditionType   UnlockConditionType
+  conditionValue  Int
+  conditionMeta   Json?
+  
+  // Game configuration
+  gameType        String    // e.g., "memory", "tap-collect", "quiz"
+  gameConfig      Json      @default("{}")
+  
+  isActive        Boolean   @default(true)
+  isPremiumOnly   Boolean   @default(false)
+  sortOrder       Int       @default(0)
+  
+  unlocks         MiniGameUnlock[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model MiniGameUnlock {
+  id              String    @id @default(cuid())
+  
+  childProfileId  String
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  
+  miniGameId      String
+  miniGame        MiniGame  @relation(fields: [miniGameId], references: [id], onDelete: Cascade)
+  
+  unlockedAt      DateTime  @default(now())
+  
+  // Game stats
+  timesPlayed     Int       @default(0)
+  highScore       Int       @default(0)
+  lastPlayedAt    DateTime?
+  
+  @@unique([childProfileId, miniGameId])
+  @@index([childProfileId])
+}
+
+// ==================== INVENTORY ====================
+
+model InventoryItem {
+  id              String    @id @default(cuid())
+  
+  slug            String    @unique
+  name            String
+  description     String
+  iconUrl         String?
+  
+  itemType        String    // e.g., "avatar", "background", "badge", "powerup"
+  
+  // Acquisition methods
+  coinCost        Int?      // Can be purchased
+  unlockCondition UnlockConditionType?
+  unlockValue     Int?
+  
+  isActive        Boolean   @default(true)
+  isPremiumOnly   Boolean   @default(false)
+  sortOrder       Int       @default(0)
+  
+  children        ChildInventory[]
+  
+  metadata        Json      @default("{}")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model ChildInventory {
+  id              String    @id @default(cuid())
+  
+  childProfileId  String
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  
+  itemId          String
+  item            InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  
+  acquiredAt      DateTime  @default(now())
+  acquiredMethod  String    // "purchase", "achievement", "mission", "gift"
+  
+  quantity        Int       @default(1)
+  
+  @@unique([childProfileId, itemId])
+  @@index([childProfileId])
+}
+
+// ==================== REWARDS ====================
+
+model Reward {
+  id              String    @id @default(cuid())
+  
+  familyId        String
+  family          Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  
+  name            String
+  description     String?
+  iconUrl         String?
+  
+  // Unlock condition
+  conditionType   UnlockConditionType
+  conditionValue  Int
+  conditionMeta   Json?
+  
+  // Real-world reward details
+  isRealWorld     Boolean   @default(true)
+  rewardDetails   String?   // e.g., "One scoop of ice cream"
+  
+  isActive        Boolean   @default(true)
+  isRepeatable    Boolean   @default(false)
+  
+  missions        Mission[]
+  unlocks         RewardUnlock[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([familyId])
+}
+
+model RewardUnlock {
+  id              String    @id @default(cuid())
+  
+  childProfileId  String
+  childProfile    ChildProfile @relation(fields: [childProfileId], references: [id], onDelete: Cascade)
+  
+  rewardId        String
+  reward          Reward    @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+  
+  unlockedAt      DateTime  @default(now())
+  claimedAt       DateTime?
+  
+  // For repeatable rewards
+  timesEarned     Int       @default(1)
+  
+  @@index([childProfileId])
+  @@index([rewardId])
+}
+
+// ==================== SUBSCRIPTION ====================
+
+model SubscriptionPlan {
+  id              String    @id @default(cuid())
+  
+  slug            String    @unique
+  name            String
+  description     String
+  
+  tier            SubscriptionTier
+  
+  monthlyPrice    Decimal   @db.Decimal(10, 2)
+  yearlyPrice     Decimal?  @db.Decimal(10, 2)
+  
+  // Feature limits
+  maxChildProfiles Int      @default(1)
+  maxActiveMissions Int     @default(5)
+  maxRewards      Int       @default(3)
+  
+  features        Json      @default("[]")
+  
+  isActive        Boolean   @default(true)
+  
+  subscriptions   Subscription[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Subscription {
+  id              String    @id @default(cuid())
+  
+  familyId        String    @unique
+  family          Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  
+  planId          String
+  plan            SubscriptionPlan @relation(fields: [planId], references: [id])
+  
+  status          SubscriptionStatus @default(ACTIVE)
+  
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  
+  // External billing reference
+  externalId      String?   // Stripe subscription ID
+  
+  cancelledAt     DateTime?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([status])
+}
+
+// ==================== NOTIFICATIONS & AUDIT ====================
+
+model Notification {
+  id              String    @id @default(cuid())
+  
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type            String    // "mission_assigned", "mission_approved", "reward_unlocked", etc.
+  title           String
+  body            String
+  
+  data            Json      @default("{}")
+  
+  isRead          Boolean   @default(false)
+  readAt          DateTime?
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id              String    @id @default(cuid())
+  
+  userId          String?
+  familyId        String?
+  family          Family?   @relation(fields: [familyId], references: [id], onDelete: SetNull)
+  
+  action          String
+  entityType      String
+  entityId        String?
+  
+  oldValues       Json?
+  newValues       Json?
+  
+  ipAddress       String?
+  userAgent       String?
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([familyId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
