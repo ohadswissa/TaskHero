@@ -1,49 +1,48 @@
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
-import * as SplashScreen from 'expo-splash-screen';
+import { SplashScreen, Stack } from 'expo-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useFonts, Nunito_400Regular, Nunito_600SemiBold, Nunito_700Bold, Nunito_800ExtraBold } from '@expo-google-fonts/nunito';
 
-// Keep splash screen visible while loading
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 2,
+      retry: 1,
+      staleTime: 1000 * 60 * 5,
     },
   },
 });
 
+const SafeGestureRoot = GestureHandlerRootView as any;
+
 export default function RootLayout() {
+  const [fontsLoaded] = useFonts({
+    Nunito_400Regular,
+    Nunito_600SemiBold,
+    Nunito_700Bold,
+    Nunito_800ExtraBold,
+  });
+
   useEffect(() => {
-    // Hide splash screen after app is ready
-    const hideSplash = async () => {
-      await SplashScreen.hideAsync();
-    };
-    hideSplash();
-  }, []);
+    if (fontsLoaded) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded]);
 
   return (
     <QueryClientProvider client={queryClient}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeGestureRoot style={{ flex: 1 }}>
         <SafeAreaProvider>
-          <StatusBar style="auto" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-            }}
-          >
-            <Stack.Screen name="index" />
-            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-            <Stack.Screen name="(parent)" options={{ headerShown: false }} />
-            <Stack.Screen name="(child)" options={{ headerShown: false }} />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(parent)" />
+            <Stack.Screen name="(child)" />
           </Stack>
         </SafeAreaProvider>
-      </GestureHandlerRootView>
+      </SafeGestureRoot>
     </QueryClientProvider>
   );
 }

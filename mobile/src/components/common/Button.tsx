@@ -6,18 +6,21 @@ import {
   ActivityIndicator,
   ViewStyle,
   TextStyle,
+  View,
 } from 'react-native';
-import { colors, spacing, typography, borderRadius } from '@/theme';
+import { Gradient as LinearGradient } from '@/components/common/Gradient';
+import { colors, spacing, typography, borderRadius, gradients, fonts } from '@/theme';
 
 interface ButtonProps {
   title: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost';
+  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
   size?: 'sm' | 'md' | 'lg';
   loading?: boolean;
   disabled?: boolean;
   style?: ViewStyle;
   textStyle?: TextStyle;
+  icon?: React.ReactNode;
 }
 
 export function Button({
@@ -29,15 +32,76 @@ export function Button({
   disabled = false,
   style,
   textStyle,
+  icon,
 }: ButtonProps) {
   const isDisabled = disabled || loading;
+  const sizeStyle = sizeStyles[size];
+  const textSizeStyle = textSizeStyles[size];
+
+  const content = (
+    <>
+      {loading ? (
+        <ActivityIndicator
+          color={variant === 'outline' || variant === 'ghost' ? colors.primary : colors.white}
+          size="small"
+        />
+      ) : (
+        <View style={styles.inner}>
+          {icon && <View style={styles.iconWrap}>{icon}</View>}
+          <Text style={[styles.text, variantTextStyles[variant], textSizeStyle, textStyle]}>
+            {title}
+          </Text>
+        </View>
+      )}
+    </>
+  );
+
+  if (variant === 'primary') {
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        disabled={isDisabled}
+        activeOpacity={0.85}
+        style={[{ borderRadius: borderRadius.xl, overflow: 'hidden' }, isDisabled && styles.disabled, style]}
+      >
+        <LinearGradient
+          colors={gradients.primary}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={[styles.base, sizeStyle] as any}
+        >
+          {content}
+        </LinearGradient>
+      </TouchableOpacity>
+    );
+  }
+
+  if (variant === 'secondary') {
+    return (
+      <TouchableOpacity
+        onPress={onPress}
+        disabled={isDisabled}
+        activeOpacity={0.85}
+        style={[{ borderRadius: borderRadius.xl, overflow: 'hidden' }, isDisabled && styles.disabled, style]}
+      >
+        <LinearGradient
+          colors={gradients.secondary}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={[styles.base, sizeStyle] as any}
+        >
+          {content}
+        </LinearGradient>
+      </TouchableOpacity>
+    );
+  }
 
   return (
     <TouchableOpacity
       style={[
         styles.base,
-        styles[variant],
-        styles[`size_${size}`],
+        sizeStyle,
+        flatVariantStyles[variant],
         isDisabled && styles.disabled,
         style,
       ]}
@@ -45,85 +109,65 @@ export function Button({
       disabled={isDisabled}
       activeOpacity={0.7}
     >
-      {loading ? (
-        <ActivityIndicator
-          color={variant === 'outline' || variant === 'ghost' ? colors.primary : colors.white}
-          size="small"
-        />
-      ) : (
-        <Text
-          style={[
-            styles.text,
-            styles[`text_${variant}`],
-            styles[`textSize_${size}`],
-            textStyle,
-          ]}
-        >
-          {title}
-        </Text>
-      )}
+      {content}
     </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
-  base: {
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  primary: {
-    backgroundColor: colors.primary,
-  },
-  secondary: {
-    backgroundColor: colors.secondary,
-  },
+const sizeStyles: Record<string, ViewStyle> = {
+  sm: { paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
+  md: { paddingVertical: 14, paddingHorizontal: spacing.xl },
+  lg: { paddingVertical: spacing.lg, paddingHorizontal: spacing.xxl },
+};
+
+const textSizeStyles: Record<string, TextStyle> = {
+  sm: { fontSize: 13, fontFamily: fonts.semiBold },
+  md: { fontSize: 16, fontFamily: fonts.bold },
+  lg: { fontSize: 18, fontFamily: fonts.bold },
+};
+
+const variantTextStyles: Record<string, TextStyle> = {
+  primary: { color: colors.white },
+  secondary: { color: colors.white },
+  outline: { color: colors.primary },
+  ghost: { color: colors.primary },
+  danger: { color: colors.error },
+};
+
+const flatVariantStyles: Record<string, ViewStyle> = {
   outline: {
     backgroundColor: 'transparent',
     borderWidth: 2,
     borderColor: colors.primary,
+    borderRadius: borderRadius.xl,
   },
   ghost: {
     backgroundColor: 'transparent',
+    borderRadius: borderRadius.xl,
   },
-  size_sm: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
+  danger: {
+    backgroundColor: colors.errorLight,
+    borderRadius: borderRadius.xl,
   },
-  size_md: {
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+};
+
+const styles = StyleSheet.create({
+  base: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  size_lg: {
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.xl,
+  inner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconWrap: {
+    marginRight: spacing.sm,
   },
   disabled: {
-    opacity: 0.5,
+    opacity: 0.45,
   },
   text: {
-    fontWeight: '600',
-  },
-  text_primary: {
-    color: colors.white,
-  },
-  text_secondary: {
-    color: colors.white,
-  },
-  text_outline: {
-    color: colors.primary,
-  },
-  text_ghost: {
-    color: colors.primary,
-  },
-  textSize_sm: {
-    ...typography.bodySmall,
-  },
-  textSize_md: {
-    ...typography.body,
-  },
-  textSize_lg: {
-    ...typography.bodyBold,
+    fontFamily: fonts.bold,
   },
 });
+

@@ -1,14 +1,14 @@
-import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Image, ScrollView } from 'react-native';
 import { useState } from 'react';
 import { Link, router } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuthStore } from '@/stores/authStore';
 import { Input } from '@/components/common/Input';
 import { Button } from '@/components/common/Button';
-import { colors, spacing, typography } from '@/theme';
+import { Gradient } from '@/components/common/Gradient';
+import { colors, spacing, typography, gradients, borderRadius, fonts } from '@/theme';
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -45,27 +45,32 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardView}
-      >
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Image
-              source={require('../../assets/taskhero.png')}
-              style={styles.logo}
-              resizeMode="contain"
-            />
-            <Text style={styles.subtitle}>Welcome back, parent!</Text>
-          </View>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        {/* Gradient hero */}
+        <Gradient colors={gradients.hero} style={styles.hero}>
+          <Image
+            source={require('../../assets/taskhero.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <Text style={styles.appName}>TaskHero</Text>
+          <Text style={styles.tagline}>Where chores become adventures</Text>
+        </Gradient>
 
-          <View style={styles.form}>
-            {error && (
-              <View style={styles.errorContainer}>
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            )}
+        {/* White card form */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Parent Sign In</Text>
+          <Text style={styles.cardSubtitle}>Sign in to manage your family</Text>
+
+          {error && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
 
             <Controller
               control={control}
@@ -106,30 +111,23 @@ export default function LoginScreen() {
               loading={isLoading}
               style={styles.button}
             />
-          </View>
 
           <View style={styles.footer}>
             <Link href="/(auth)/register" asChild>
               <TouchableOpacity>
-                <Text style={styles.link}>Don't have an account? <Text style={styles.linkBold}>Sign up</Text></Text>
+                <Text style={styles.link}>No account? <Text style={styles.linkBold}>Create one</Text></Text>
               </TouchableOpacity>
             </Link>
 
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>or</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
             <Link href="/(auth)/child-login" asChild>
               <TouchableOpacity style={styles.childLoginButton}>
-                <Text style={styles.childLoginText}>I'm a child - Login with PIN</Text>
+                <Text style={styles.childLoginText}>I'm a child →</Text>
               </TouchableOpacity>
             </Link>
           </View>
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -138,79 +136,90 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  keyboardView: {
-    flex: 1,
+  scroll: {
+    flexGrow: 1,
   },
-  content: {
-    flex: 1,
-    padding: spacing.lg,
-    justifyContent: 'center',
-  },
-  header: {
+  hero: {
     alignItems: 'center',
-    marginBottom: spacing.xl,
+    justifyContent: 'center',
+    paddingTop: 80,
+    paddingBottom: 60,
+    paddingHorizontal: spacing.xl,
   },
   logo: {
-    width: 200,
-    height: 100,
-    marginBottom: spacing.sm,
+    width: 80,
+    height: 80,
+    borderRadius: borderRadius.xl,
+    marginBottom: spacing.md,
   },
-  subtitle: {
-    ...typography.body,
+  appName: {
+    fontFamily: fonts.extraBold,
+    fontSize: 38,
+    color: colors.white,
+    letterSpacing: -0.5,
+  },
+  tagline: {
+    fontFamily: fonts.regular,
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: spacing.xs,
+  },
+  card: {
+    flex: 1,
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    marginTop: -24,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xxl,
+    paddingBottom: spacing.xxxl,
+  },
+  cardTitle: {
+    fontFamily: fonts.extraBold,
+    fontSize: 26,
+    color: colors.text,
+    marginBottom: spacing.xs,
+  },
+  cardSubtitle: {
+    fontFamily: fonts.regular,
+    fontSize: 15,
     color: colors.textSecondary,
-  },
-  form: {
     marginBottom: spacing.xl,
   },
   errorContainer: {
     backgroundColor: colors.errorLight,
     padding: spacing.md,
-    borderRadius: 8,
+    borderRadius: borderRadius.md,
     marginBottom: spacing.md,
   },
   errorText: {
     color: colors.error,
-    ...typography.bodySmall,
+    fontFamily: fonts.regular,
+    fontSize: 14,
   },
   button: {
     marginTop: spacing.md,
   },
   footer: {
     alignItems: 'center',
+    marginTop: spacing.xl,
+    gap: spacing.md,
   },
   link: {
-    ...typography.body,
+    fontFamily: fonts.regular,
+    fontSize: 14,
     color: colors.textSecondary,
   },
   linkBold: {
+    fontFamily: fonts.bold,
     color: colors.primary,
-    fontWeight: '600',
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.lg,
-    width: '100%',
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    ...typography.bodySmall,
-    color: colors.textSecondary,
-    marginHorizontal: spacing.md,
   },
   childLoginButton: {
-    backgroundColor: colors.secondary,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xl,
-    borderRadius: 12,
+    paddingVertical: spacing.sm,
   },
   childLoginText: {
-    ...typography.body,
-    color: colors.white,
-    fontWeight: '600',
+    fontFamily: fonts.semiBold,
+    fontSize: 14,
+    color: colors.secondary,
   },
 });
