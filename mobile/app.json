@@ -29,8 +29,10 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/taskhero.png"
+      "favicon": "./assets/taskhero.png",
+      "generateStaticViewports": false
     },
+    "platforms": ["ios", "android", "web"],
     "plugins": [
       "expo-router",
       "expo-secure-store",

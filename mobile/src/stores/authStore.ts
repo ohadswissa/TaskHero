@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import { authApi } from '@/api/auth.api';
 
 interface User {
@@ -33,10 +33,12 @@ interface AuthState {
   clearAuth: () => void;
 }
 
-// Custom storage using SecureStore for sensitive data
+// Custom storage using SecureStore on native, localStorage on web
 const secureStorage = {
   getItem: async (name: string): Promise<string | null> => {
     try {
+      if (Platform.OS === 'web') return localStorage.getItem(name);
+      const SecureStore = await import('expo-secure-store');
       return await SecureStore.getItemAsync(name);
     } catch {
       return null;
@@ -44,6 +46,8 @@ const secureStorage = {
   },
   setItem: async (name: string, value: string): Promise<void> => {
     try {
+      if (Platform.OS === 'web') { localStorage.setItem(name, value); return; }
+      const SecureStore = await import('expo-secure-store');
       await SecureStore.setItemAsync(name, value);
     } catch (error) {
       console.error('SecureStore setItem error:', error);
@@ -51,6 +55,8 @@ const secureStorage = {
   },
   removeItem: async (name: string): Promise<void> => {
     try {
+      if (Platform.OS === 'web') { localStorage.removeItem(name); return; }
+      const SecureStore = await import('expo-secure-store');
       await SecureStore.deleteItemAsync(name);
     } catch (error) {
       console.error('SecureStore removeItem error:', error);

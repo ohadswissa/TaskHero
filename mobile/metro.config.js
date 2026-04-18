@@ -15,9 +15,16 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
+// Ensure native/expo packages (including reanimated 4.x which uses import.meta)
+// are Babel-transformed instead of passed through raw.
+config.transformer = {
+  ...config.transformer,
+  transformIgnorePatterns: [
+    'node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg|react-native-reanimated|zustand)',
+  ],
+};
+
 // Intercept React resolution BEFORE Metro's normal node_modules traversal.
-// This prevents nested copies (e.g. expo-router/node_modules/react) from
-// winning over the canonical single copy in mobile/node_modules/react.
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (
     moduleName === 'react' ||
@@ -26,8 +33,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     moduleName.startsWith('react/') ||
     moduleName.startsWith('react-dom/')
   ) {
-    // Pretend the require came from the project root so Metro walks
-    // mobile/node_modules first and finds the canonical copy.
     return context.resolveRequest(
       { ...context, originModulePath: path.join(projectRoot, '_entry.js') },
       moduleName,
