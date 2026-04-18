@@ -19,7 +19,7 @@ export default function ChildLayout() {
         name="index"
         options={{
           title: 'Hero',
-          tabBarIcon: ({ color, size }) => (
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
             <Ionicons name="person-outline" size={size} color={color} />
           ),
         }}
@@ -28,7 +28,7 @@ export default function ChildLayout() {
         name="missions"
         options={{
           title: 'Missions',
-          tabBarIcon: ({ color, size }) => (
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
             <Ionicons name="flag-outline" size={size} color={color} />
           ),
         }}
@@ -37,7 +37,7 @@ export default function ChildLayout() {
         name="games"
         options={{
           title: 'Games',
-          tabBarIcon: ({ color, size }) => (
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
             <Ionicons name="game-controller-outline" size={size} color={color} />
           ),
         }}
@@ -46,7 +46,7 @@ export default function ChildLayout() {
         name="rewards"
         options={{
           title: 'Rewards',
-          tabBarIcon: ({ color, size }) => (
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
             <Ionicons name="gift-outline" size={size} color={color} />
           ),
         }}

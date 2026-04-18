@@ -1,13 +1,25 @@
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { colors, spacing, typography } from '@/theme';
 import { Card } from '@/components/common';
+import { useAuthStore } from '@/stores/authStore';
 
 export default function ChildDashboard() {
+  const { logout } = useAuthStore();
+
+  const handleLogout = async () => {
+    await logout();
+    router.replace('/(auth)/login');
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView}>
         <View style={styles.header}>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Text style={styles.logoutText}>Sign Out</Text>
+          </TouchableOpacity>
           <Text style={styles.greeting}>Welcome back! 🦸</Text>
           <Text style={styles.heroName}>Super Alex</Text>
         </View>
@@ -70,6 +82,16 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     alignItems: 'center',
     paddingTop: spacing.xl,
+  },
+  logoutButton: {
+    alignSelf: 'flex-end',
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  logoutText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
   },
   greeting: {
     ...typography.body,

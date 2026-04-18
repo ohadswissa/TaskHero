@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { colors, spacing, typography } from '@/theme';
 import { Button } from '@/components/common';
@@ -9,6 +10,7 @@ export default function SettingsScreen() {
 
   const handleLogout = async () => {
     await logout();
+    router.replace('/(auth)/login');
   };
 
   return (

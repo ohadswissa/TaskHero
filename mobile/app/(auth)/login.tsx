@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, Image } from 'react-native';
 import { useState } from 'react';
 import { Link, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -52,7 +52,11 @@ export default function LoginScreen() {
       >
         <View style={styles.content}>
           <View style={styles.header}>
-            <Text style={styles.title}>TaskHero</Text>
+            <Image
+              source={require('../../assets/taskhero.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
             <Text style={styles.subtitle}>Welcome back, parent!</Text>
           </View>
 
@@ -146,10 +150,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.xl,
   },
-  title: {
-    ...typography.h1,
-    color: colors.primary,
-    marginBottom: spacing.xs,
+  logo: {
+    width: 200,
+    height: 100,
+    marginBottom: spacing.sm,
   },
   subtitle: {
     ...typography.body,
