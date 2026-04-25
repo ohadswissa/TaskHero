@@ -13,13 +13,13 @@ export default function ParentLayout() {
           backgroundColor: colors.white,
           borderTopWidth: 0,
           ...shadows.md,
-          height: 60,
+          height: 64,
           paddingBottom: 8,
           paddingTop: 6,
         },
         tabBarLabelStyle: {
           fontFamily: fonts.semiBold,
-          fontSize: 11,
+          fontSize: 10,
         },
       }}
     >
@@ -38,6 +38,15 @@ export default function ParentLayout() {
           title: 'Missions',
           tabBarIcon: ({ color, size }: { color: string; size: number }) => (
             <Ionicons name="flag-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="rewards"
+        options={{
+          title: 'Rewards',
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
+            <Ionicons name="gift-outline" size={size} color={color} />
           ),
         }}
       />
@@ -62,10 +71,7 @@ export default function ParentLayout() {
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Settings',
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="settings-outline" size={size} color={color} />
-          ),
+          href: null,
         }}
       />
     </Tabs>

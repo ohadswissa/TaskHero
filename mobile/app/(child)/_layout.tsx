@@ -13,13 +13,13 @@ export default function ChildLayout() {
           backgroundColor: colors.white,
           borderTopWidth: 0,
           ...shadows.md,
-          height: 60,
+          height: 64,
           paddingBottom: 8,
           paddingTop: 6,
         },
         tabBarLabelStyle: {
           fontFamily: fonts.semiBold,
-          fontSize: 11,
+          fontSize: 10,
         },
       }}
     >
@@ -42,11 +42,20 @@ export default function ChildLayout() {
         }}
       />
       <Tabs.Screen
-        name="games"
+        name="room"
         options={{
-          title: 'Games',
+          title: 'My Room',
           tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="game-controller-outline" size={size} color={color} />
+            <Ionicons name="home-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="avatar"
+        options={{
+          title: 'Avatar',
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
+            <Ionicons name="body-outline" size={size} color={color} />
           ),
         }}
       />
@@ -57,6 +66,13 @@ export default function ChildLayout() {
           tabBarIcon: ({ color, size }: { color: string; size: number }) => (
             <Ionicons name="gift-outline" size={size} color={color} />
           ),
+        }}
+      />
+      {/* Hide old games tab */}
+      <Tabs.Screen
+        name="games"
+        options={{
+          href: null,
         }}
       />
     </Tabs>
