@@ -7,76 +7,239 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, fonts, shadows } from '@/theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const ROOM_WIDTH = SCREEN_WIDTH - 32;
-const ROOM_HEIGHT = 280;
 
-// Furniture items with positions in the room
-interface FurnitureItem {
-  id: string;
-  label: string;
-  emoji: string;
-  cost: number;
-  unlocked: boolean;
-  category: 'floor' | 'wall' | 'table' | 'special';
-  size: 'sm' | 'md' | 'lg';
-  // Position in room (percentage-based)
-  defaultX: number;
-  defaultY: number;
+// ─── Creature Visual Components (Pure RN Views, no emojis) ───
+
+function CreatureEye({ size = 22, x = 0, blink }: { size?: number; x?: number; blink: Animated.Value }) {
+  return (
+    <View style={[creatureStyles.eye, { width: size, height: size, transform: [{ translateX: x }] }]}>
+      <View style={creatureStyles.eyeWhite}>
+        <Animated.View style={[creatureStyles.eyePupil, { transform: [{ scaleY: blink }] }]} />
+        <View style={creatureStyles.eyeShine} />
+      </View>
+    </View>
+  );
 }
 
-const ALL_FURNITURE: FurnitureItem[] = [
-  // Floor items
-  { id: 'bed', label: 'Cozy Bed', emoji: '🛏️', cost: 0, unlocked: true, category: 'floor', size: 'lg', defaultX: 10, defaultY: 55 },
-  { id: 'desk', label: 'Study Desk', emoji: '📝', cost: 0, unlocked: true, category: 'table', size: 'md', defaultX: 60, defaultY: 50 },
-  { id: 'plant', label: 'House Plant', emoji: '🪴', cost: 10, unlocked: true, category: 'floor', size: 'sm', defaultX: 85, defaultY: 65 },
-  { id: 'rug', label: 'Cozy Rug', emoji: '🟤', cost: 20, unlocked: true, category: 'floor', size: 'lg', defaultX: 40, defaultY: 75 },
-  { id: 'shelf', label: 'Bookshelf', emoji: '📚', cost: 25, unlocked: true, category: 'wall', size: 'md', defaultX: 35, defaultY: 15 },
-  { id: 'lamp', label: 'Cool Lamp', emoji: '💡', cost: 15, unlocked: true, category: 'table', size: 'sm', defaultX: 78, defaultY: 42 },
-  { id: 'chair', label: 'Gaming Chair', emoji: '🪑', cost: 30, unlocked: true, category: 'floor', size: 'sm', defaultX: 65, defaultY: 62 },
-  { id: 'trophy', label: 'Trophy Case', emoji: '🏆', cost: 50, unlocked: false, category: 'wall', size: 'md', defaultX: 15, defaultY: 12 },
-  { id: 'aquarium', label: 'Aquarium', emoji: '🐠', cost: 60, unlocked: false, category: 'table', size: 'md', defaultX: 50, defaultY: 20 },
-  { id: 'console', label: 'Game Console', emoji: '🎮', cost: 80, unlocked: false, category: 'floor', size: 'md', defaultX: 42, defaultY: 58 },
-  { id: 'telescope', label: 'Telescope', emoji: '🔭', cost: 100, unlocked: false, category: 'floor', size: 'md', defaultX: 80, defaultY: 30 },
-  { id: 'pet', label: 'Pet Cat', emoji: '🐱', cost: 120, unlocked: false, category: 'floor', size: 'sm', defaultX: 25, defaultY: 72 },
-  { id: 'robot', label: 'Robot Buddy', emoji: '🤖', cost: 150, unlocked: false, category: 'floor', size: 'sm', defaultX: 55, defaultY: 70 },
-  { id: 'rocket', label: 'Rocket Model', emoji: '🚀', cost: 40, unlocked: false, category: 'wall', size: 'sm', defaultX: 70, defaultY: 10 },
+function CreatureBody({ stage, color, blink, bounce }: { stage: number; color: string; blink: Animated.Value; bounce: Animated.Value }) {
+  const bodySize = 100 + stage * 20;
+  const headSize = 60 + stage * 8;
+  const hasWings = stage >= 2;
+  const hasTail = stage >= 1;
+  const hasHorns = stage >= 3;
+  const hasCrown = stage >= 4;
+
+  return (
+    <Animated.View style={[creatureStyles.creatureRoot, { transform: [{ translateY: bounce }] }]}>
+      {/* Shadow underneath */}
+      <View style={[creatureStyles.creatureShadow, { width: bodySize * 0.8, height: bodySize * 0.15 }]} />
+
+      {/* Wings (behind body) */}
+      {hasWings && (
+        <>
+          <Animated.View style={[creatureStyles.wing, creatureStyles.wingLeft, {
+            backgroundColor: color,
+            width: 40 + stage * 8,
+            height: 55 + stage * 10,
+            left: -20 - stage * 6,
+            transform: [{ rotate: '-25deg' }, { scaleY: bounce.interpolate({ inputRange: [-8, 0, 8], outputRange: [1.1, 1, 0.9] }) }],
+          }]}>
+            <View style={[creatureStyles.wingInner, { backgroundColor: adjustColor(color, 20) }]} />
+          </Animated.View>
+          <Animated.View style={[creatureStyles.wing, creatureStyles.wingRight, {
+            backgroundColor: color,
+            width: 40 + stage * 8,
+            height: 55 + stage * 10,
+            right: -20 - stage * 6,
+            transform: [{ rotate: '25deg' }, { scaleY: bounce.interpolate({ inputRange: [-8, 0, 8], outputRange: [0.9, 1, 1.1] }) }],
+          }]}>
+            <View style={[creatureStyles.wingInner, { backgroundColor: adjustColor(color, 20) }]} />
+          </Animated.View>
+        </>
+      )}
+
+      {/* Body */}
+      <View style={[creatureStyles.body, {
+        width: bodySize,
+        height: bodySize * 1.1,
+        backgroundColor: color,
+        borderRadius: bodySize * 0.45,
+      }]}>
+        {/* Belly patch */}
+        <View style={[creatureStyles.belly, {
+          width: bodySize * 0.55,
+          height: bodySize * 0.5,
+          borderRadius: bodySize * 0.25,
+          backgroundColor: adjustColor(color, 40),
+        }]} />
+
+        {/* Belly stripes */}
+        {[0, 1, 2].map(i => (
+          <View key={i} style={[creatureStyles.bellyStripe, {
+            width: bodySize * 0.3 - i * 8,
+            top: bodySize * 0.52 + i * 10,
+            backgroundColor: adjustColor(color, 30),
+          }]} />
+        ))}
+      </View>
+
+      {/* Head */}
+      <View style={[creatureStyles.head, {
+        width: headSize,
+        height: headSize,
+        backgroundColor: color,
+        borderRadius: headSize * 0.5,
+        top: -headSize * 0.35,
+      }]}>
+        {/* Horns */}
+        {hasHorns && (
+          <>
+            <View style={[creatureStyles.horn, creatureStyles.hornLeft, { borderBottomColor: adjustColor(color, -30) }]} />
+            <View style={[creatureStyles.horn, creatureStyles.hornRight, { borderBottomColor: adjustColor(color, -30) }]} />
+          </>
+        )}
+
+        {/* Crown for max level */}
+        {hasCrown && (
+          <View style={creatureStyles.crown}>
+            <View style={creatureStyles.crownBase} />
+            <View style={[creatureStyles.crownPoint, { left: 2 }]} />
+            <View style={[creatureStyles.crownPoint, { left: 12 }]} />
+            <View style={[creatureStyles.crownPoint, { left: 22 }]} />
+          </View>
+        )}
+
+        {/* Cheeks */}
+        <View style={[creatureStyles.cheek, creatureStyles.cheekLeft]} />
+        <View style={[creatureStyles.cheek, creatureStyles.cheekRight]} />
+
+        {/* Eyes */}
+        <View style={creatureStyles.eyeContainer}>
+          <CreatureEye size={18 + stage * 2} x={-4} blink={blink} />
+          <CreatureEye size={18 + stage * 2} x={4} blink={blink} />
+        </View>
+
+        {/* Mouth */}
+        <View style={creatureStyles.mouth}>
+          <View style={creatureStyles.mouthCurve} />
+        </View>
+
+        {/* Ear/spikes on head */}
+        <View style={[creatureStyles.earLeft, { backgroundColor: adjustColor(color, -15) }]} />
+        <View style={[creatureStyles.earRight, { backgroundColor: adjustColor(color, -15) }]} />
+      </View>
+
+      {/* Tail */}
+      {hasTail && (
+        <Animated.View style={[creatureStyles.tail, {
+          backgroundColor: color,
+          width: 12 + stage * 3,
+          height: 40 + stage * 10,
+          right: -15 - stage * 5,
+          transform: [{ rotate: bounce.interpolate({ inputRange: [-8, 0, 8], outputRange: ['-15deg', '10deg', '25deg'] }) }],
+        }]}>
+          <View style={[creatureStyles.tailTip, { backgroundColor: adjustColor(color, -20) }]} />
+        </Animated.View>
+      )}
+
+      {/* Arms/paws */}
+      <View style={[creatureStyles.paw, creatureStyles.pawLeft, { backgroundColor: adjustColor(color, -10) }]} />
+      <View style={[creatureStyles.paw, creatureStyles.pawRight, { backgroundColor: adjustColor(color, -10) }]} />
+
+      {/* Feet */}
+      <View style={[creatureStyles.foot, creatureStyles.footLeft, { backgroundColor: adjustColor(color, -10) }]} />
+      <View style={[creatureStyles.foot, creatureStyles.footRight, { backgroundColor: adjustColor(color, -10) }]} />
+    </Animated.View>
+  );
+}
+
+// Color utility
+function adjustColor(hex: string, amount: number): string {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const r = Math.min(255, Math.max(0, ((num >> 16) & 0xFF) + amount));
+  const g = Math.min(255, Math.max(0, ((num >> 8) & 0xFF) + amount));
+  const b = Math.min(255, Math.max(0, (num & 0xFF) + amount));
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+
+// ─── Creature Stats ───
+interface CreatureStats {
+  name: string;
+  happiness: number;  // 0-100
+  energy: number;     // 0-100
+  hunger: number;     // 0-100
+  xp: number;
+  level: number;
+  stage: number;      // 0=egg, 1=baby, 2=child, 3=teen, 4=adult
+}
+
+const STAGE_NAMES = ['Egg', 'Hatchling', 'Young', 'Adolescent', 'Majestic'];
+const CREATURE_COLORS = [
+  { id: 'emerald', label: 'Emerald', color: '#34D399' },
+  { id: 'sapphire', label: 'Sapphire', color: '#60A5FA' },
+  { id: 'ruby', label: 'Ruby', color: '#F87171' },
+  { id: 'amethyst', label: 'Amethyst', color: '#A78BFA' },
+  { id: 'gold', label: 'Gold', color: '#FBBF24' },
+  { id: 'coral', label: 'Coral', color: '#FB7185' },
 ];
 
-const WALL_THEMES = [
-  { id: 'default', label: 'White', wallColor: '#F0F0F5', floorColor: '#D4C4A8', accentColor: '#E0E0E8', cost: 0 },
-  { id: 'ocean', label: 'Ocean', wallColor: '#B3D9FF', floorColor: '#C4B896', accentColor: '#8EC5FF', cost: 30 },
-  { id: 'forest', label: 'Forest', wallColor: '#B8E6C8', floorColor: '#C4B896', accentColor: '#90D4A8', cost: 30 },
-  { id: 'space', label: 'Space', wallColor: '#2D1B69', floorColor: '#1A1A2E', accentColor: '#4A2D8C', cost: 50 },
-  { id: 'sunset', label: 'Sunset', wallColor: '#FFB88C', floorColor: '#D4A878', accentColor: '#FF9A76', cost: 50 },
-  { id: 'candy', label: 'Candy', wallColor: '#FFB6C1', floorColor: '#F0D4DA', accentColor: '#FF91A4', cost: 60 },
-  { id: 'royal', label: 'Royal', wallColor: '#DAA520', floorColor: '#8B7355', accentColor: '#FFD700', cost: 80 },
+const CARE_ACTIONS = [
+  { id: 'feed', label: 'Feed', icon: 'nutrition' as const, stat: 'hunger', amount: 25, cooldown: 'Ready', color: '#F59E0B' },
+  { id: 'play', label: 'Play', icon: 'game-controller' as const, stat: 'happiness', amount: 20, cooldown: 'Ready', color: '#EC4899' },
+  { id: 'rest', label: 'Rest', icon: 'moon' as const, stat: 'energy', amount: 30, cooldown: 'Ready', color: '#8B5CF6' },
+  { id: 'train', label: 'Train', icon: 'fitness' as const, stat: 'xp', amount: 15, cooldown: '2 missions', color: '#3B82F6' },
 ];
 
-const DECORATIONS = [
-  { id: 'stars', label: 'Stars', emoji: '⭐', cost: 0, position: 'ceiling' },
-  { id: 'banner', label: 'Hero Banner', emoji: '🎪', cost: 15, position: 'wall' },
-  { id: 'fairy', label: 'Fairy Lights', emoji: '✨', cost: 20, position: 'ceiling' },
-  { id: 'poster', label: 'Hero Poster', emoji: '🖼️', cost: 25, position: 'wall' },
-  { id: 'globe', label: 'Globe', emoji: '🌍', cost: 35, position: 'wall' },
-  { id: 'flag', label: 'Hero Flag', emoji: '🚩', cost: 15, position: 'wall' },
+const ACCESSORIES = [
+  { id: 'bow', label: 'Red Bow', cost: 20, icon: 'ribbon' as const, unlocked: true },
+  { id: 'hat', label: 'Wizard Hat', cost: 40, icon: 'flash' as const, unlocked: true },
+  { id: 'scarf', label: 'Star Scarf', cost: 30, icon: 'star' as const, unlocked: false },
+  { id: 'glasses', label: 'Cool Shades', cost: 50, icon: 'glasses' as const, unlocked: false },
+  { id: 'cape', label: 'Hero Cape', cost: 80, icon: 'shield' as const, unlocked: false },
+  { id: 'wings', label: 'Angel Wings', cost: 120, icon: 'sparkles' as const, unlocked: false },
 ];
-
-type ShopTab = 'furniture' | 'walls' | 'decor';
 
 export default function RoomScreen() {
-  const [shopTab, setShopTab] = useState<ShopTab>('furniture');
-  const [ownedItems, setOwnedItems] = useState<string[]>(['bed', 'desk', 'plant', 'rug', 'shelf', 'lamp', 'chair', 'stars']);
-  const [placedItems, setPlacedItems] = useState<string[]>(['bed', 'desk', 'plant', 'shelf']);
-  const [currentWall, setCurrentWall] = useState('default');
-  const [placedDecor, setPlacedDecor] = useState<string[]>(['stars']);
-  const [coins, setCoins] = useState(75);
-  const [level] = useState(3);
-  const [showShop, setShowShop] = useState(true);
+  const [creature, setCreature] = useState<CreatureStats>({
+    name: 'Sparky',
+    happiness: 72,
+    energy: 85,
+    hunger: 45,
+    xp: 320,
+    level: 3,
+    stage: 2,
+  });
+  const [creatureColor, setCreatureColor] = useState('#34D399');
+  const [coins] = useState(75);
+  const [activeTab, setActiveTab] = useState<'care' | 'style' | 'milestones'>('care');
+  const [ownedAccessories, setOwnedAccessories] = useState<string[]>(['bow', 'hat']);
+  const [equippedAccessories, setEquippedAccessories] = useState<string[]>(['bow']);
 
+  // Animations
   const bounceAnim = useRef(new Animated.Value(0)).current;
+  const blinkAnim = useRef(new Animated.Value(1)).current;
+  const heartAnim = useRef(new Animated.Value(0)).current;
   const sparkleAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // Idle bounce
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(bounceAnim, { toValue: -8, duration: 1200, useNativeDriver: true }),
+        Animated.timing(bounceAnim, { toValue: 0, duration: 1200, useNativeDriver: true }),
+      ])
+    ).start();
+
+    // Blink
+    Animated.loop(
+      Animated.sequence([
+        Animated.delay(3000),
+        Animated.timing(blinkAnim, { toValue: 0.1, duration: 100, useNativeDriver: true }),
+        Animated.timing(blinkAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
+      ])
+    ).start();
+
+    // Sparkle
     Animated.loop(
       Animated.sequence([
         Animated.timing(sparkleAnim, { toValue: 1, duration: 2000, useNativeDriver: true }),
@@ -85,341 +248,263 @@ export default function RoomScreen() {
     ).start();
   }, []);
 
-  const theme = WALL_THEMES.find(w => w.id === currentWall) || WALL_THEMES[0];
-  const isDarkTheme = currentWall === 'space';
+  const doCareAction = (action: typeof CARE_ACTIONS[0]) => {
+    setCreature(prev => {
+      const updated = { ...prev };
+      if (action.stat === 'xp') {
+        updated.xp += action.amount;
+        if (updated.xp >= (updated.level + 1) * 100) {
+          updated.level += 1;
+          if (updated.level >= 5 && updated.stage < 4) updated.stage += 1;
+        }
+      } else {
+        (updated as any)[action.stat] = Math.min(100, (updated as any)[action.stat] + action.amount);
+      }
+      return updated;
+    });
 
-  const buyItem = (id: string, cost: number) => {
-    if (coins >= cost && !ownedItems.includes(id)) {
-      setCoins(c => c - cost);
-      setOwnedItems(prev => [...prev, id]);
-      // Bounce animation
-      Animated.sequence([
-        Animated.timing(bounceAnim, { toValue: -10, duration: 150, useNativeDriver: true }),
-        Animated.spring(bounceAnim, { toValue: 0, friction: 3, useNativeDriver: true }),
-      ]).start();
-    }
+    // Heart burst animation
+    Animated.sequence([
+      Animated.timing(heartAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.delay(600),
+      Animated.timing(heartAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
   };
 
-  const togglePlaced = (id: string) => {
-    if (ownedItems.includes(id)) {
-      setPlacedItems(prev =>
-        prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-      );
-    }
-  };
-
-  const toggleDecor = (id: string) => {
-    if (ownedItems.includes(id)) {
-      setPlacedDecor(prev =>
-        prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-      );
-    }
-  };
+  const overallMood = Math.round((creature.happiness + creature.energy + creature.hunger) / 3);
+  const moodLabel = overallMood >= 80 ? 'Ecstatic' : overallMood >= 60 ? 'Happy' : overallMood >= 40 ? 'Content' : overallMood >= 20 ? 'Sad' : 'Distressed';
+  const moodColor = overallMood >= 80 ? '#34D399' : overallMood >= 60 ? '#60A5FA' : overallMood >= 40 ? '#FBBF24' : '#F87171';
+  const xpToNext = (creature.level + 1) * 100;
+  const xpProgress = (creature.xp % 100) / 100;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
-      <Gradient colors={['#EC4899', '#8B5CF6', '#6366F1']} style={styles.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+      <Gradient colors={['#6366F1', '#8B5CF6', '#A78BFA']} style={styles.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.headerTitle}>My Room 🏠</Text>
-            <Text style={styles.headerSub}>Level {level} · {placedItems.length} items placed</Text>
+            <Text style={styles.headerTitle}>My Creature</Text>
+            <Text style={styles.headerSub}>{creature.name} · {STAGE_NAMES[creature.stage]}</Text>
           </View>
           <View style={styles.headerRight}>
-            <View style={styles.coinPill}>
-              <Text style={styles.coinPillText}>🪙 {coins}</Text>
+            <View style={styles.coinBadge}>
+              <Ionicons name="diamond" size={14} color="#FBBF24" />
+              <Text style={styles.coinText}>{coins}</Text>
             </View>
-            <View style={styles.levelPill}>
-              <Text style={styles.levelPillText}>LVL {level}</Text>
+            <View style={styles.moodBadge}>
+              <View style={[styles.moodDot, { backgroundColor: moodColor }]} />
+              <Text style={styles.moodText}>{moodLabel}</Text>
             </View>
           </View>
         </View>
       </Gradient>
 
       <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-        {/* THE ROOM - Isometric-ish 3D view */}
-        <View style={styles.roomContainer}>
-          <Animated.View style={[styles.roomWrapper, { transform: [{ translateY: bounceAnim }] }]}>
-            {/* Back wall */}
-            <View style={[styles.backWall, { backgroundColor: theme.wallColor }]}>
-              {/* Wall pattern/texture */}
-              <View style={[styles.wallMolding, { backgroundColor: theme.accentColor }]} />
+        {/* Creature Display Arena */}
+        <View style={styles.arenaContainer}>
+          <Gradient colors={['#1E1B4B', '#312E81', '#3730A3']} style={styles.arena} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}>
+            {/* Floating particles */}
+            {[...Array(6)].map((_, i) => (
+              <Animated.View
+                key={i}
+                style={[styles.particle, {
+                  left: `${15 + i * 14}%`,
+                  top: `${10 + (i % 3) * 25}%`,
+                  width: 4 + i % 3 * 2,
+                  height: 4 + i % 3 * 2,
+                  opacity: sparkleAnim.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: i % 2 === 0 ? [0.2, 0.8, 0.2] : [0.8, 0.2, 0.8],
+                  }),
+                }]}
+              />
+            ))}
 
-              {/* Window */}
-              <View style={styles.window}>
-                <Gradient colors={['#87CEEB', '#B0E2FF']} style={styles.windowInner} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }}>
-                  <View style={styles.windowCross} />
-                  <View style={[styles.windowCross, styles.windowCrossH]} />
-                </Gradient>
-                <View style={styles.windowSill} />
-              </View>
+            {/* Ground glow */}
+            <View style={styles.groundGlow} />
 
-              {/* Ceiling decorations */}
-              <View style={styles.ceilingDecor}>
-                {placedDecor.includes('stars') && (
-                  <Animated.Text style={[styles.ceilingItem, { opacity: sparkleAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] }) }]}>⭐</Animated.Text>
-                )}
-                {placedDecor.includes('fairy') && (
-                  <Animated.Text style={[styles.ceilingItem, { opacity: sparkleAnim }]}>✨✨✨</Animated.Text>
-                )}
-              </View>
+            {/* The Creature */}
+            <View style={styles.creatureStage}>
+              <CreatureBody stage={creature.stage} color={creatureColor} blink={blinkAnim} bounce={bounceAnim} />
 
-              {/* Wall items */}
-              {placedItems.filter(id => ALL_FURNITURE.find(f => f.id === id)?.category === 'wall').map(id => {
-                const item = ALL_FURNITURE.find(f => f.id === id);
-                if (!item) return null;
-                return (
-                  <View key={id} style={[styles.wallItem, { left: `${item.defaultX}%`, top: `${item.defaultY}%` }]}>
-                    <View style={styles.wallItemFrame}>
-                      <Text style={styles.wallItemEmoji}>{item.emoji}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-
-              {/* Wall decorations */}
-              {placedDecor.includes('banner') && (
-                <View style={[styles.wallItem, { left: '55%', top: '5%' }]}>
-                  <Text style={{ fontSize: 28 }}>🎪</Text>
-                </View>
-              )}
-              {placedDecor.includes('poster') && (
-                <View style={[styles.wallItem, { right: '10%', top: '15%' }]}>
-                  <View style={styles.posterFrame}>
-                    <Text style={{ fontSize: 20 }}>🖼️</Text>
-                  </View>
-                </View>
-              )}
-              {placedDecor.includes('flag') && (
-                <View style={[styles.wallItem, { left: '5%', top: '5%' }]}>
-                  <Text style={{ fontSize: 22 }}>🚩</Text>
-                </View>
-              )}
+              {/* Heart reaction */}
+              <Animated.View style={[styles.heartReaction, {
+                opacity: heartAnim,
+                transform: [{ translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -40] }) },
+                  { scale: heartAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.3, 1.2, 1] }) }],
+              }]}>
+                <Ionicons name="heart" size={32} color="#F43F5E" />
+              </Animated.View>
             </View>
 
-            {/* Floor */}
-            <View style={[styles.floor, { backgroundColor: theme.floorColor }]}>
-              {/* Floor grid pattern */}
-              <View style={styles.floorGrid}>
-                {[0, 1, 2, 3, 4].map(i => (
-                  <View key={i} style={[styles.floorLine, { left: `${20 * i}%` }]} />
-                ))}
-                {[0, 1, 2].map(i => (
-                  <View key={`h${i}`} style={[styles.floorLineH, { top: `${33 * i}%` }]} />
-                ))}
-              </View>
-
-              {/* Rug if placed */}
-              {placedItems.includes('rug') && (
-                <View style={styles.rug}>
-                  <Gradient colors={['#C4A882', '#B8956A']} style={styles.rugInner} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                    <View style={styles.rugPattern} />
-                  </Gradient>
-                </View>
-              )}
-
-              {/* Floor furniture */}
-              {placedItems.filter(id => {
-                const item = ALL_FURNITURE.find(f => f.id === id);
-                return item && (item.category === 'floor' || item.category === 'table') && id !== 'rug';
-              }).map(id => {
-                const item = ALL_FURNITURE.find(f => f.id === id);
-                if (!item) return null;
-                const sizeMap = { sm: 36, md: 44, lg: 52 };
-                const fontSize = sizeMap[item.size];
-                return (
-                  <View key={id} style={[styles.floorItem, {
-                    left: `${item.defaultX - 5}%`,
-                    top: `${item.defaultY - 40}%`,
-                  }]}>
-                    {/* Shadow */}
-                    <View style={[styles.itemShadow, { width: fontSize * 0.8, height: fontSize * 0.3 }]} />
-                    <Text style={[styles.floorItemEmoji, { fontSize }]}>{item.emoji}</Text>
-                    {/* Subtle label */}
-                  </View>
-                );
-              })}
-
-              {/* Pet animation */}
-              {placedItems.includes('pet') && (
-                <Animated.View style={[styles.floorItem, {
-                  left: '20%', top: '30%',
-                  transform: [{ translateX: sparkleAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 15] }) }],
-                }]}>
-                  <Text style={{ fontSize: 36 }}>🐱</Text>
-                </Animated.View>
-              )}
+            {/* Ground platform */}
+            <View style={styles.platform}>
+              <Gradient colors={['rgba(139,92,246,0.4)', 'rgba(99,102,241,0.2)']} style={styles.platformInner} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} />
             </View>
 
-            {/* Left wall edge (3D effect) */}
-            <View style={[styles.leftEdge, { backgroundColor: theme.accentColor }]} />
-            {/* Right wall edge */}
-            <View style={[styles.rightEdge, { backgroundColor: theme.accentColor }]} />
-
-            {/* Room level badge */}
-            <View style={styles.roomBadge}>
-              <Gradient colors={['#8B5CF6', '#6366F1']} style={styles.roomBadgeInner} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={styles.roomBadgeText}>🏠 LVL {level}</Text>
+            {/* Level badge */}
+            <View style={styles.levelBadge}>
+              <Gradient colors={['#F59E0B', '#D97706']} style={styles.levelBadgeInner} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                <Text style={styles.levelBadgeText}>LVL {creature.level}</Text>
               </Gradient>
             </View>
-          </Animated.View>
+          </Gradient>
         </View>
 
-        {/* Room stats bar */}
-        <View style={styles.statsBar}>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{placedItems.length}</Text>
-            <Text style={styles.statLabel}>Placed</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{ownedItems.length}</Text>
-            <Text style={styles.statLabel}>Owned</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{ALL_FURNITURE.length - ownedItems.length}</Text>
-            <Text style={styles.statLabel}>Locked</Text>
-          </View>
+        {/* Stats Bar */}
+        <View style={styles.statsContainer}>
+          <StatBar label="Happiness" value={creature.happiness} color="#EC4899" icon="heart" />
+          <StatBar label="Energy" value={creature.energy} color="#8B5CF6" icon="flash" />
+          <StatBar label="Hunger" value={creature.hunger} color="#F59E0B" icon="nutrition" />
         </View>
 
-        {/* Shop Tabs */}
-        <View style={styles.shopTabs}>
-          {([
-            { key: 'furniture' as ShopTab, label: 'Furniture', icon: '🪑' },
-            { key: 'walls' as ShopTab, label: 'Themes', icon: '🎨' },
-            { key: 'decor' as ShopTab, label: 'Decor', icon: '✨' },
-          ]).map(tab => (
+        {/* XP Progress */}
+        <View style={styles.xpContainer}>
+          <View style={styles.xpHeader}>
+            <Text style={styles.xpLabel}>Experience</Text>
+            <Text style={styles.xpValue}>{creature.xp % 100}/{100} XP</Text>
+          </View>
+          <View style={styles.xpBarBg}>
+            <Gradient
+              colors={['#8B5CF6', '#6366F1']}
+              style={[styles.xpBarFill, { width: `${xpProgress * 100}%` }]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            />
+          </View>
+          <Text style={styles.xpStage}>
+            {STAGE_NAMES[creature.stage]} → {creature.stage < 4 ? STAGE_NAMES[creature.stage + 1] : 'MAX'}
+          </Text>
+        </View>
+
+        {/* Tabs */}
+        <View style={styles.tabRow}>
+          {(['care', 'style', 'milestones'] as const).map(tab => (
             <TouchableOpacity
-              key={tab.key}
-              style={[styles.shopTab, shopTab === tab.key && styles.shopTabActive]}
-              onPress={() => setShopTab(tab.key)}
+              key={tab}
+              style={[styles.tab, activeTab === tab && styles.tabActive]}
+              onPress={() => setActiveTab(tab)}
             >
-              <Text style={styles.shopTabIcon}>{tab.icon}</Text>
-              <Text style={[styles.shopTabLabel, shopTab === tab.key && styles.shopTabLabelActive]}>{tab.label}</Text>
+              <Ionicons
+                name={tab === 'care' ? 'heart-circle' : tab === 'style' ? 'color-palette' : 'trophy'}
+                size={18}
+                color={activeTab === tab ? '#FFF' : 'rgba(255,255,255,0.5)'}
+              />
+              <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
+                {tab === 'care' ? 'Care' : tab === 'style' ? 'Style' : 'Growth'}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Shop Content */}
-        <View style={styles.shopContent}>
-          {shopTab === 'furniture' && (
-            <>
-              {['floor', 'wall', 'table', 'special'].map(cat => {
-                const items = ALL_FURNITURE.filter(f => f.category === cat);
-                if (items.length === 0) return null;
-                return (
-                  <View key={cat} style={styles.shopCategory}>
-                    <Text style={styles.shopCatTitle}>
-                      {cat === 'floor' ? '🏠 Floor Items' : cat === 'wall' ? '🖼️ Wall Items' : cat === 'table' ? '🪑 Desk & Table' : '⭐ Special'}
-                    </Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      {items.map(item => {
-                        const owned = ownedItems.includes(item.id);
-                        const placed = placedItems.includes(item.id);
-                        return (
-                          <TouchableOpacity
-                            key={item.id}
-                            style={[styles.shopItem, placed && styles.shopItemPlaced, !item.unlocked && !owned && styles.shopItemLocked]}
-                            onPress={() => {
-                              if (owned) {
-                                togglePlaced(item.id);
-                              } else if (item.unlocked || coins >= item.cost) {
-                                buyItem(item.id, item.cost);
-                              }
-                            }}
-                          >
-                            <Text style={styles.shopItemEmoji}>{item.emoji}</Text>
-                            <Text style={styles.shopItemLabel}>{item.label}</Text>
-                            {owned ? (
-                              <View style={[styles.shopItemAction, placed ? styles.placedAction : styles.ownedAction]}>
-                                <Text style={styles.shopItemActionText}>{placed ? '✓ Placed' : 'Place'}</Text>
-                              </View>
-                            ) : item.unlocked ? (
-                              <View style={styles.buyAction}>
-                                <Text style={styles.buyActionText}>🪙 {item.cost}</Text>
-                              </View>
-                            ) : (
-                              <View style={styles.lockAction}>
-                                <Text style={styles.lockActionText}>🔒 {item.cost}</Text>
-                              </View>
-                            )}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
-                  </View>
-                );
-              })}
-            </>
-          )}
-
-          {shopTab === 'walls' && (
-            <View style={styles.wallGrid}>
-              {WALL_THEMES.map(wall => (
+        {/* Tab Content */}
+        <View style={styles.tabContent}>
+          {activeTab === 'care' && (
+            <View style={styles.careGrid}>
+              {CARE_ACTIONS.map(action => (
                 <TouchableOpacity
-                  key={wall.id}
-                  style={[styles.wallOption, currentWall === wall.id && styles.wallOptionActive]}
-                  onPress={() => {
-                    if (wall.cost === 0 || ownedItems.includes(`wall_${wall.id}`)) {
-                      setCurrentWall(wall.id);
-                    } else if (coins >= wall.cost) {
-                      setCoins(c => c - wall.cost);
-                      setOwnedItems(prev => [...prev, `wall_${wall.id}`]);
-                      setCurrentWall(wall.id);
-                    }
-                  }}
+                  key={action.id}
+                  style={styles.careCard}
+                  onPress={() => doCareAction(action)}
+                  activeOpacity={0.7}
                 >
-                  <View style={styles.wallPreview}>
-                    <View style={[styles.wallPreviewWall, { backgroundColor: wall.wallColor }]} />
-                    <View style={[styles.wallPreviewFloor, { backgroundColor: wall.floorColor }]} />
+                  <View style={[styles.careIconCircle, { backgroundColor: action.color + '20' }]}>
+                    <Ionicons name={action.icon} size={28} color={action.color} />
                   </View>
-                  <Text style={styles.wallOptionLabel}>{wall.label}</Text>
-                  {wall.cost > 0 && !ownedItems.includes(`wall_${wall.id}`) && currentWall !== wall.id && (
-                    <Text style={styles.wallCost}>🪙 {wall.cost}</Text>
-                  )}
-                  {currentWall === wall.id && (
-                    <View style={styles.activeWallBadge}>
-                      <Text style={styles.activeWallText}>✓</Text>
-                    </View>
-                  )}
+                  <Text style={styles.careLabel}>{action.label}</Text>
+                  <Text style={styles.careEffect}>+{action.amount} {action.stat}</Text>
+                  <View style={[styles.careBadge, { backgroundColor: action.color + '30' }]}>
+                    <Text style={[styles.careBadgeText, { color: action.color }]}>{action.cooldown}</Text>
+                  </View>
                 </TouchableOpacity>
               ))}
             </View>
           )}
 
-          {shopTab === 'decor' && (
-            <View style={styles.decorGrid}>
-              {DECORATIONS.map(dec => {
-                const owned = ownedItems.includes(dec.id);
-                const placed = placedDecor.includes(dec.id);
-                return (
+          {activeTab === 'style' && (
+            <View>
+              {/* Color Picker */}
+              <Text style={styles.sectionTitle}>Creature Color</Text>
+              <View style={styles.colorRow}>
+                {CREATURE_COLORS.map(c => (
                   <TouchableOpacity
-                    key={dec.id}
-                    style={[styles.decorItem, placed && styles.decorItemPlaced]}
-                    onPress={() => {
-                      if (owned) {
-                        toggleDecor(dec.id);
-                      } else if (coins >= dec.cost) {
-                        buyItem(dec.id, dec.cost);
-                      }
-                    }}
+                    key={c.id}
+                    style={[styles.colorOption, creatureColor === c.color && styles.colorOptionActive]}
+                    onPress={() => setCreatureColor(c.color)}
                   >
-                    <Text style={styles.decorEmoji}>{dec.emoji}</Text>
-                    <Text style={styles.decorLabel}>{dec.label}</Text>
-                    <Text style={styles.decorPos}>{dec.position}</Text>
-                    {owned ? (
-                      <View style={[styles.shopItemAction, placed ? styles.placedAction : styles.ownedAction]}>
-                        <Text style={styles.shopItemActionText}>{placed ? '✓ Active' : 'Place'}</Text>
-                      </View>
-                    ) : (
-                      <View style={styles.buyAction}>
-                        <Text style={styles.buyActionText}>🪙 {dec.cost}</Text>
-                      </View>
-                    )}
+                    <View style={[styles.colorSwatch, { backgroundColor: c.color }]} />
+                    <Text style={styles.colorLabel}>{c.label}</Text>
                   </TouchableOpacity>
-                );
-              })}
+                ))}
+              </View>
+
+              {/* Accessories */}
+              <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Accessories</Text>
+              <View style={styles.accessoryGrid}>
+                {ACCESSORIES.map(acc => {
+                  const owned = ownedAccessories.includes(acc.id);
+                  const equipped = equippedAccessories.includes(acc.id);
+                  return (
+                    <TouchableOpacity
+                      key={acc.id}
+                      style={[styles.accessoryCard, equipped && styles.accessoryEquipped, !acc.unlocked && !owned && styles.accessoryLocked]}
+                      onPress={() => {
+                        if (equipped) {
+                          setEquippedAccessories(prev => prev.filter(a => a !== acc.id));
+                        } else if (owned) {
+                          setEquippedAccessories(prev => [...prev, acc.id]);
+                        }
+                      }}
+                    >
+                      <View style={[styles.accessoryIcon, { backgroundColor: equipped ? '#8B5CF620' : '#2A2A4A' }]}>
+                        <Ionicons name={acc.icon} size={24} color={equipped ? '#8B5CF6' : '#888'} />
+                      </View>
+                      <Text style={styles.accessoryLabel}>{acc.label}</Text>
+                      {owned ? (
+                        <View style={[styles.accessoryBadge, equipped ? styles.equippedBadge : styles.ownedBadge]}>
+                          <Text style={styles.accessoryBadgeText}>{equipped ? 'Worn' : 'Equip'}</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.accessoryBadge}>
+                          <Ionicons name="diamond" size={10} color="#FBBF24" />
+                          <Text style={[styles.accessoryBadgeText, { color: '#FBBF24' }]}> {acc.cost}</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {activeTab === 'milestones' && (
+            <View>
+              {[
+                { stage: 0, title: 'Hatched!', desc: 'Your creature was born', xp: 0, done: creature.stage >= 1 },
+                { stage: 1, title: 'First Steps', desc: 'Grew a tail and started walking', xp: 100, done: creature.stage >= 2 },
+                { stage: 2, title: 'Taking Flight', desc: 'Sprouted wings and learned to glide', xp: 300, done: creature.stage >= 3 },
+                { stage: 3, title: 'Coming of Age', desc: 'Grew mighty horns and doubled in size', xp: 600, done: creature.stage >= 4 },
+                { stage: 4, title: 'Legendary Form', desc: 'Achieved the ultimate majestic form with a golden crown', xp: 1000, done: false },
+              ].map((milestone, idx) => (
+                <View key={idx} style={[styles.milestoneRow, milestone.done && styles.milestoneDone]}>
+                  <View style={[styles.milestoneIcon, milestone.done ? styles.milestoneIconDone : styles.milestoneIconPending]}>
+                    {milestone.done ? (
+                      <Ionicons name="checkmark" size={18} color="#FFF" />
+                    ) : (
+                      <Ionicons name="lock-closed" size={14} color="rgba(255,255,255,0.4)" />
+                    )}
+                  </View>
+                  <View style={styles.milestoneInfo}>
+                    <Text style={[styles.milestoneTitle, !milestone.done && styles.milestoneTitleLocked]}>
+                      {milestone.title}
+                    </Text>
+                    <Text style={styles.milestoneDesc}>{milestone.desc}</Text>
+                  </View>
+                  <Text style={[styles.milestoneXp, milestone.done && { color: '#34D399' }]}>
+                    {milestone.xp} XP
+                  </Text>
+                </View>
+              ))}
             </View>
           )}
         </View>
@@ -430,180 +515,424 @@ export default function RoomScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1A1A2E' },
+// ─── Stat Bar Component ───
+function StatBar({ label, value, color, icon }: { label: string; value: number; color: string; icon: string }) {
+  return (
+    <View style={styles.statBar}>
+      <View style={styles.statBarHeader}>
+        <View style={styles.statBarLeft}>
+          <Ionicons name={icon as any} size={14} color={color} />
+          <Text style={styles.statBarLabel}>{label}</Text>
+        </View>
+        <Text style={[styles.statBarValue, { color }]}>{value}%</Text>
+      </View>
+      <View style={styles.statBarTrack}>
+        <View style={[styles.statBarFill, { width: `${value}%`, backgroundColor: color }]} />
+      </View>
+    </View>
+  );
+}
 
-  // Header
+// ─── Creature Styles ───
+const creatureStyles = StyleSheet.create({
+  creatureRoot: {
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  creatureShadow: {
+    position: 'absolute',
+    bottom: -8,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderRadius: 100,
+  },
+  body: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  belly: {
+    position: 'absolute',
+    bottom: '15%',
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  bellyStripe: {
+    position: 'absolute',
+    height: 3,
+    borderRadius: 2,
+    alignSelf: 'center',
+  },
+  head: {
+    position: 'absolute',
+    zIndex: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eyeContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: -4,
+  },
+  eye: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eyeWhite: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#FFF',
+    borderRadius: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  eyePupil: {
+    width: '55%',
+    height: '55%',
+    backgroundColor: '#1E1B4B',
+    borderRadius: 100,
+  },
+  eyeShine: {
+    position: 'absolute',
+    top: '18%',
+    right: '22%',
+    width: '22%',
+    height: '22%',
+    backgroundColor: '#FFF',
+    borderRadius: 100,
+  },
+  mouth: {
+    marginTop: 2,
+    width: 16,
+    height: 8,
+    overflow: 'hidden',
+  },
+  mouthCurve: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#1E1B4B',
+    borderTopColor: 'transparent',
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    marginTop: -10,
+  },
+  cheek: {
+    position: 'absolute',
+    width: 10,
+    height: 6,
+    borderRadius: 5,
+    backgroundColor: 'rgba(236,72,153,0.3)',
+    top: '58%',
+  },
+  cheekLeft: { left: '8%' },
+  cheekRight: { right: '8%' },
+  earLeft: {
+    position: 'absolute',
+    top: -6,
+    left: 4,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    transform: [{ rotate: '-20deg' }],
+  },
+  earRight: {
+    position: 'absolute',
+    top: -6,
+    right: 4,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    transform: [{ rotate: '20deg' }],
+  },
+  horn: {
+    position: 'absolute',
+    top: -14,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderBottomWidth: 16,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+  },
+  hornLeft: { left: 8 },
+  hornRight: { right: 8 },
+  crown: {
+    position: 'absolute',
+    top: -22,
+    width: 32,
+    height: 16,
+  },
+  crownBase: {
+    position: 'absolute',
+    bottom: 0,
+    width: 32,
+    height: 8,
+    backgroundColor: '#FBBF24',
+    borderRadius: 2,
+  },
+  crownPoint: {
+    position: 'absolute',
+    top: 0,
+    width: 6,
+    height: 10,
+    backgroundColor: '#FBBF24',
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
+  },
+  wing: {
+    position: 'absolute',
+    bottom: '30%',
+    borderRadius: 30,
+    zIndex: 1,
+    opacity: 0.8,
+  },
+  wingLeft: {},
+  wingRight: {},
+  wingInner: {
+    position: 'absolute',
+    bottom: '20%',
+    left: '20%',
+    width: '60%',
+    height: '50%',
+    borderRadius: 20,
+    opacity: 0.5,
+  },
+  tail: {
+    position: 'absolute',
+    bottom: '20%',
+    borderRadius: 6,
+    zIndex: 1,
+  },
+  tailTip: {
+    position: 'absolute',
+    bottom: -4,
+    left: '10%',
+    width: '80%',
+    height: 10,
+    borderRadius: 5,
+  },
+  paw: {
+    position: 'absolute',
+    width: 16,
+    height: 20,
+    borderRadius: 8,
+    bottom: '35%',
+    zIndex: 3,
+  },
+  pawLeft: { left: -10 },
+  pawRight: { right: -10 },
+  foot: {
+    position: 'absolute',
+    width: 22,
+    height: 12,
+    borderRadius: 6,
+    bottom: -4,
+    zIndex: 3,
+  },
+  footLeft: { left: '25%' },
+  footRight: { right: '25%' },
+});
+
+// ─── Screen Styles ───
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0F0D2E' },
+
   header: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  headerTitle: { fontFamily: fonts.extraBold, fontSize: 22, color: colors.white },
-  headerSub: { fontFamily: fonts.regular, fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2 },
+  headerTitle: { fontFamily: fonts.extraBold, fontSize: 22, color: '#FFF' },
+  headerSub: { fontFamily: fonts.regular, fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 },
   headerRight: { flexDirection: 'row', gap: spacing.sm },
-  coinPill: {
-    backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 5, borderRadius: borderRadius.full,
+  coinBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
   },
-  coinPillText: { fontFamily: fonts.bold, fontSize: 13, color: colors.white },
-  levelPill: {
-    backgroundColor: 'rgba(255,255,255,0.15)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: borderRadius.full,
+  coinText: { fontFamily: fonts.bold, fontSize: 13, color: '#FFF' },
+  moodBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20,
   },
-  levelPillText: { fontFamily: fonts.bold, fontSize: 13, color: colors.white },
+  moodDot: { width: 8, height: 8, borderRadius: 4 },
+  moodText: { fontFamily: fonts.semiBold, fontSize: 12, color: '#FFF' },
 
-  // Room
-  roomContainer: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
-  roomWrapper: {
-    width: ROOM_WIDTH, height: ROOM_HEIGHT, position: 'relative',
-    borderRadius: 8, overflow: 'hidden',
-    ...shadows.lg,
+  // Arena
+  arenaContainer: { paddingHorizontal: spacing.md, paddingTop: spacing.sm },
+  arena: {
+    height: 300,
+    borderRadius: 24,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingBottom: 40,
   },
+  particle: {
+    position: 'absolute',
+    backgroundColor: '#A78BFA',
+    borderRadius: 10,
+  },
+  groundGlow: {
+    position: 'absolute',
+    bottom: 20,
+    width: '60%',
+    height: 40,
+    backgroundColor: 'rgba(139,92,246,0.2)',
+    borderRadius: 100,
+  },
+  creatureStage: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  heartReaction: {
+    position: 'absolute',
+    top: -20,
+    zIndex: 20,
+  },
+  platform: {
+    position: 'absolute',
+    bottom: 10,
+    width: '50%',
+    height: 20,
+    borderRadius: 100,
+    overflow: 'hidden',
+  },
+  platformInner: { flex: 1, borderRadius: 100 },
+  levelBadge: { position: 'absolute', top: 12, right: 12, borderRadius: 12, overflow: 'hidden' },
+  levelBadgeInner: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
+  levelBadgeText: { fontFamily: fonts.extraBold, fontSize: 12, color: '#FFF' },
 
-  // Back wall
-  backWall: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: '55%',
-    borderTopLeftRadius: 8, borderTopRightRadius: 8,
+  // Stats
+  statsContainer: {
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    gap: spacing.sm,
   },
-  wallMolding: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, height: 4,
+  statBar: {},
+  statBarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  statBarLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statBarLabel: { fontFamily: fonts.semiBold, fontSize: 12, color: 'rgba(255,255,255,0.7)' },
+  statBarValue: { fontFamily: fonts.bold, fontSize: 12 },
+  statBarTrack: {
+    height: 8,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 4,
+    overflow: 'hidden',
   },
-  window: {
-    position: 'absolute', top: '15%', right: '15%', width: 60, height: 50,
-    borderRadius: 4, overflow: 'hidden', borderWidth: 3, borderColor: '#8B7355',
-  },
-  windowInner: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  windowCross: { position: 'absolute', width: 2, height: '100%', backgroundColor: '#8B7355' },
-  windowCrossH: { width: '100%', height: 2 },
-  windowSill: {
-    position: 'absolute', bottom: -4, left: -4, right: -4, height: 6,
-    backgroundColor: '#8B7355', borderRadius: 2,
-  },
-
-  ceilingDecor: {
-    position: 'absolute', top: 4, left: 0, right: 0,
-    flexDirection: 'row', justifyContent: 'center', gap: 8,
-  },
-  ceilingItem: { fontSize: 16 },
-
-  wallItem: { position: 'absolute' },
-  wallItemFrame: {
-    backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 6, padding: 4,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
-  },
-  wallItemEmoji: { fontSize: 22 },
-  posterFrame: {
-    backgroundColor: '#FFF', borderRadius: 4, padding: 4,
-    borderWidth: 2, borderColor: '#8B7355',
-  },
-
-  // Floor
-  floor: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, height: '50%',
-    borderBottomLeftRadius: 8, borderBottomRightRadius: 8,
-  },
-  floorGrid: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.1 },
-  floorLine: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: '#000' },
-  floorLineH: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: '#000' },
-
-  rug: {
-    position: 'absolute', left: '20%', top: '30%', width: '55%', height: '45%',
-    borderRadius: 8, overflow: 'hidden',
-  },
-  rugInner: { flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
-  rugPattern: {
-    width: '80%', height: '70%', borderRadius: 4,
-    borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)',
-  },
-
-  floorItem: { position: 'absolute', alignItems: 'center' },
-  itemShadow: {
-    position: 'absolute', bottom: -4, backgroundColor: 'rgba(0,0,0,0.15)',
-    borderRadius: 100, alignSelf: 'center',
-  },
-  floorItemEmoji: { textAlign: 'center' },
-
-  // 3D edges
-  leftEdge: {
-    position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
-    borderTopLeftRadius: 8, borderBottomLeftRadius: 8,
-  },
-  rightEdge: {
-    position: 'absolute', right: 0, top: 0, bottom: 0, width: 3,
-    borderTopRightRadius: 8, borderBottomRightRadius: 8,
+  statBarFill: {
+    height: '100%',
+    borderRadius: 4,
   },
 
-  roomBadge: { position: 'absolute', top: 8, left: 8 },
-  roomBadgeInner: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
-  roomBadgeText: { fontFamily: fonts.bold, fontSize: 11, color: colors.white },
+  // XP
+  xpContainer: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: borderRadius.xl,
+    padding: spacing.md,
+  },
+  xpHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  xpLabel: { fontFamily: fonts.bold, fontSize: 14, color: '#FFF' },
+  xpValue: { fontFamily: fonts.semiBold, fontSize: 12, color: 'rgba(255,255,255,0.6)' },
+  xpBarBg: {
+    height: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 5,
+    overflow: 'hidden',
+  },
+  xpBarFill: { height: '100%', borderRadius: 5 },
+  xpStage: { fontFamily: fonts.regular, fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 6, textAlign: 'center' },
 
-  // Stats bar
-  statsBar: {
-    flexDirection: 'row', marginHorizontal: spacing.lg, marginTop: spacing.md,
-    backgroundColor: '#2A2A4A', borderRadius: borderRadius.xl, padding: spacing.md,
+  // Tabs
+  tabRow: {
+    flexDirection: 'row',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: borderRadius.xl,
+    padding: 4,
   },
-  statItem: { flex: 1, alignItems: 'center' },
-  statValue: { fontFamily: fonts.extraBold, fontSize: 20, color: colors.white },
-  statLabel: { fontFamily: fonts.regular, fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 },
-  statDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginVertical: 4 },
+  tab: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 10, borderRadius: borderRadius.lg, gap: 6,
+  },
+  tabActive: { backgroundColor: '#8B5CF6' },
+  tabText: { fontFamily: fonts.semiBold, fontSize: 12, color: 'rgba(255,255,255,0.5)' },
+  tabTextActive: { color: '#FFF' },
 
-  // Shop
-  shopTabs: {
-    flexDirection: 'row', marginHorizontal: spacing.lg, marginTop: spacing.lg,
-    backgroundColor: '#2A2A4A', borderRadius: borderRadius.xl, padding: 4,
-  },
-  shopTab: {
-    flex: 1, alignItems: 'center', paddingVertical: spacing.sm, borderRadius: borderRadius.lg,
-  },
-  shopTabActive: { backgroundColor: '#8B5CF6' },
-  shopTabIcon: { fontSize: 18 },
-  shopTabLabel: { fontFamily: fonts.semiBold, fontSize: 11, color: 'rgba(255,255,255,0.6)', marginTop: 2 },
-  shopTabLabelActive: { color: colors.white },
+  // Tab content
+  tabContent: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
 
-  shopContent: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
-  shopCategory: { marginBottom: spacing.lg },
-  shopCatTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.white, marginBottom: spacing.md },
+  // Care
+  careGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  careCard: {
+    width: '48%',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: borderRadius.xl,
+    padding: spacing.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  careIconCircle: {
+    width: 56, height: 56, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 8,
+  },
+  careLabel: { fontFamily: fonts.bold, fontSize: 14, color: '#FFF', marginBottom: 2 },
+  careEffect: { fontFamily: fonts.regular, fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8 },
+  careBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
+  careBadgeText: { fontFamily: fonts.semiBold, fontSize: 10 },
 
-  shopItem: {
-    width: 100, backgroundColor: '#2A2A4A', borderRadius: borderRadius.xl,
-    alignItems: 'center', paddingVertical: spacing.md, paddingHorizontal: spacing.sm,
-    marginRight: spacing.sm, borderWidth: 2, borderColor: '#3A3A5A',
+  // Style
+  sectionTitle: { fontFamily: fonts.bold, fontSize: 16, color: '#FFF', marginBottom: spacing.md },
+  colorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  colorOption: {
+    width: '30%', alignItems: 'center', padding: spacing.sm,
+    backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: borderRadius.lg,
+    borderWidth: 2, borderColor: 'transparent',
   },
-  shopItemPlaced: { borderColor: '#8B5CF6', backgroundColor: '#2D1B69' },
-  shopItemLocked: { opacity: 0.5 },
-  shopItemEmoji: { fontSize: 32, marginBottom: 4 },
-  shopItemLabel: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.white, textAlign: 'center', marginBottom: 6 },
-  shopItemAction: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
-  placedAction: { backgroundColor: '#8B5CF6' },
-  ownedAction: { backgroundColor: '#3A3A5A' },
-  shopItemActionText: { fontFamily: fonts.bold, fontSize: 10, color: colors.white },
-  buyAction: { backgroundColor: '#F59E0B', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
-  buyActionText: { fontFamily: fonts.bold, fontSize: 10, color: '#000' },
-  lockAction: { backgroundColor: '#3A3A5A', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8 },
-  lockActionText: { fontFamily: fonts.bold, fontSize: 10, color: 'rgba(255,255,255,0.5)' },
+  colorOptionActive: { borderColor: '#8B5CF6' },
+  colorSwatch: { width: 32, height: 32, borderRadius: 16, marginBottom: 4 },
+  colorLabel: { fontFamily: fonts.semiBold, fontSize: 11, color: 'rgba(255,255,255,0.7)' },
 
-  // Wall themes
-  wallGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  wallOption: {
-    width: '31%', backgroundColor: '#2A2A4A', borderRadius: borderRadius.xl,
-    alignItems: 'center', padding: spacing.sm, borderWidth: 2, borderColor: '#3A3A5A',
+  accessoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  accessoryCard: {
+    width: '31%', alignItems: 'center', padding: spacing.sm,
+    backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: borderRadius.xl,
+    borderWidth: 2, borderColor: 'transparent',
   },
-  wallOptionActive: { borderColor: '#8B5CF6' },
-  wallPreview: { width: 60, height: 50, borderRadius: 8, overflow: 'hidden', marginBottom: 4 },
-  wallPreviewWall: { height: '55%' },
-  wallPreviewFloor: { height: '45%' },
-  wallOptionLabel: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.white },
-  wallCost: { fontFamily: fonts.bold, fontSize: 10, color: '#F59E0B', marginTop: 2 },
-  activeWallBadge: {
-    position: 'absolute', top: 4, right: 4, width: 18, height: 18, borderRadius: 9,
-    backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center',
+  accessoryEquipped: { borderColor: '#8B5CF6', backgroundColor: 'rgba(139,92,246,0.1)' },
+  accessoryLocked: { opacity: 0.4 },
+  accessoryIcon: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 6,
   },
-  activeWallText: { fontFamily: fonts.bold, fontSize: 10, color: colors.white },
+  accessoryLabel: { fontFamily: fonts.semiBold, fontSize: 10, color: '#FFF', textAlign: 'center', marginBottom: 4 },
+  accessoryBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.1)' },
+  equippedBadge: { backgroundColor: '#8B5CF630' },
+  ownedBadge: { backgroundColor: 'rgba(255,255,255,0.1)' },
+  accessoryBadgeText: { fontFamily: fonts.bold, fontSize: 9, color: '#FFF' },
 
-  // Decorations
-  decorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  decorItem: {
-    width: '31%', backgroundColor: '#2A2A4A', borderRadius: borderRadius.xl,
-    alignItems: 'center', padding: spacing.md, borderWidth: 2, borderColor: '#3A3A5A',
+  // Milestones
+  milestoneRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
   },
-  decorItemPlaced: { borderColor: '#8B5CF6', backgroundColor: '#2D1B69' },
-  decorEmoji: { fontSize: 28, marginBottom: 4 },
-  decorLabel: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.white },
-  decorPos: { fontFamily: fonts.regular, fontSize: 9, color: 'rgba(255,255,255,0.4)', marginBottom: 6 },
+  milestoneDone: {},
+  milestoneIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  milestoneIconDone: { backgroundColor: '#34D399' },
+  milestoneIconPending: { backgroundColor: 'rgba(255,255,255,0.1)' },
+  milestoneInfo: { flex: 1 },
+  milestoneTitle: { fontFamily: fonts.bold, fontSize: 14, color: '#FFF' },
+  milestoneTitleLocked: { color: 'rgba(255,255,255,0.4)' },
+  milestoneDesc: { fontFamily: fonts.regular, fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 },
+  milestoneXp: { fontFamily: fonts.bold, fontSize: 12, color: 'rgba(255,255,255,0.3)' },
 });

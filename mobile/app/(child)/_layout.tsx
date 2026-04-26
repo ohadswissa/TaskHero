@@ -42,12 +42,19 @@ export default function ChildLayout() {
         }}
       />
       <Tabs.Screen
+        name="creature"
+        options={{
+          title: 'Creature',
+          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
+            <Ionicons name="paw-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      {/* Hide old room tab */}
+      <Tabs.Screen
         name="room"
         options={{
-          title: 'My Room',
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen

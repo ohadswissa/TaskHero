@@ -154,7 +154,7 @@ export default function LoginScreen() {
             <TouchableOpacity style={styles.childLoginButton}>
               <Gradient colors={['#F59E0B', '#EF4444']} style={styles.childLoginGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                 <Text style={styles.childLoginEmoji}>🦸</Text>
-                <Text style={styles.childLoginText} numberOfLines={1}>I'm a Hero (Kid Login)</Text>
+                <Text style={styles.childLoginText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>I'm a Hero (Kid Login)</Text>
                 <View style={styles.childLoginIconBox}>
                   <Ionicons name="arrow-forward" size={14} color={colors.white} />
                 </View>
@@ -359,8 +359,9 @@ const styles = StyleSheet.create({
   },
   childLoginText: {
     fontFamily: fonts.bold,
-    fontSize: 16,
+    fontSize: 15,
     color: colors.white,
+    flexShrink: 1,
   },
   footer: {
     alignItems: 'center',

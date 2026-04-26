@@ -48,7 +48,7 @@ export function Button({
       ) : (
         <View style={styles.inner}>
           {icon && <View style={styles.iconWrap}>{icon}</View>}
-          <Text style={[styles.text, variantTextStyles[variant], textSizeStyle, textStyle]}>
+          <Text style={[styles.text, variantTextStyles[variant], textSizeStyle, textStyle]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
             {title}
           </Text>
         </View>

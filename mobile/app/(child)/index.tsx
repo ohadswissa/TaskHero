@@ -103,11 +103,11 @@ export default function ChildDashboard() {
               </LinearGradient>
               <Text style={styles.quickActionLabel}>Missions</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(child)/room' as any)}>
+            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(child)/creature' as any)}>
               <LinearGradient colors={['#EC4899', '#8B5CF6']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={styles.quickActionEmoji}>🏠</Text>
+                <Text style={styles.quickActionEmoji}>🐾</Text>
               </LinearGradient>
-              <Text style={styles.quickActionLabel}>My Room</Text>
+              <Text style={styles.quickActionLabel}>Creature</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(child)/avatar' as any)}>
               <LinearGradient colors={['#8B5CF6', '#6366F1']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
