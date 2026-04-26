@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platfor
 import { useState } from 'react';
 import { Link, router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -51,6 +52,11 @@ export default function ChildLoginScreen() {
         style={styles.keyboardView}
       >
         <View style={styles.content}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color={colors.primary} />
+            <Text style={styles.backText}>Back</Text>
+          </TouchableOpacity>
+
           <View style={styles.header}>
             <Text style={styles.emoji}>🦸</Text>
             <Text style={styles.title}>Hero Login</Text>
@@ -181,6 +187,17 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 24,
     letterSpacing: 8,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: spacing.lg,
+  },
+  backText: {
+    color: colors.primary,
+    fontSize: 16,
+    fontWeight: '600',
   },
   button: {
     marginTop: spacing.md,
