@@ -168,7 +168,7 @@ export default function ChildDashboard() {
               { emoji: '🍦', name: 'Ice Cream', coins: 50, progress: 1 },
               { emoji: '📱', name: 'Screen Time', coins: 80, progress: 0.94 },
               { emoji: '🎡', name: 'Playground', coins: 150, progress: 0.5 },
-              { emoji: '🎟️', name: 'Jumburry', coins: 200, progress: 0.38 },
+              { emoji: '🎟️', name: 'Indoor Playground', coins: 200, progress: 0.38 },
             ].map((r, i) => (
               <Card key={i} variant="elevated" style={styles.rewardPreviewCard}>
                 <Text style={styles.rewardEmoji}>{r.emoji}</Text>

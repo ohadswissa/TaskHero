@@ -134,7 +134,7 @@ export default function ParentDashboard() {
           </View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             {[
-              { emoji: '🎟️', name: 'Jumburry Ticket', coins: 200 },
+              { emoji: '🎟️', name: 'Indoor Playground Ticket', coins: 200 },
               { emoji: '🍦', name: 'Ice Cream', coins: 50 },
               { emoji: '🎡', name: 'Playground', coins: 150 },
               { emoji: '📱', name: 'Screen Time', coins: 80 },

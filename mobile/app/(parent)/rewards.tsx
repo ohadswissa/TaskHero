@@ -16,7 +16,7 @@ const REWARD_CATEGORIES = [
 ];
 
 const SUGGESTED_REWARDS = [
-  { name: 'Jumburry Ticket', category: 'tickets', icon: '🎟️', description: '1 ticket to Jumburry indoor playground', coinsRequired: 200 },
+  { name: 'Indoor Playground Ticket', category: 'tickets', icon: '🎟️', description: '1 ticket to indoor playground', coinsRequired: 200 },
   { name: 'Playground Visit', category: 'activity', icon: '🎡', description: 'Trip to the playground of choice', coinsRequired: 150 },
   { name: 'Ice Cream', category: 'food', icon: '🍦', description: 'One scoop of ice cream', coinsRequired: 50 },
   { name: 'Movie Night', category: 'activity', icon: '🎬', description: 'Choose a family movie', coinsRequired: 100 },
@@ -43,7 +43,7 @@ export default function ParentRewardsScreen() {
   const [rewardCategory, setRewardCategory] = useState('tickets');
   const [rewardCoins, setRewardCoins] = useState('100');
   const [rewards, setRewards] = useState<Reward[]>([
-    { id: '1', name: 'Jumburry Ticket', category: 'tickets', icon: '🎟️', description: '1 ticket to Jumburry', coinsRequired: 200, isActive: true },
+    { id: '1', name: 'Indoor Playground Ticket', category: 'tickets', icon: '🎟️', description: '1 ticket to indoor playground', coinsRequired: 200, isActive: true },
     { id: '2', name: 'Ice Cream', category: 'food', icon: '🍦', description: 'One scoop of ice cream', coinsRequired: 50, isActive: true },
     { id: '3', name: 'Playground Visit', category: 'activity', icon: '🎡', description: 'Trip to the playground', coinsRequired: 150, isActive: true },
     { id: '4', name: '30 min Screen Time', category: 'digital', icon: '📱', description: 'Extra screen time', coinsRequired: 80, isActive: true },
@@ -109,7 +109,7 @@ export default function ParentRewardsScreen() {
             <Text style={styles.sectionLabel}>Reward Details</Text>
             <Card variant="elevated" style={styles.formCard}>
               <Text style={styles.inputLabel}>Name *</Text>
-              <TextInput style={styles.textInput} placeholder="e.g., Jumburry Ticket" value={rewardName} onChangeText={setRewardName} placeholderTextColor={colors.textTertiary} />
+              <TextInput style={styles.textInput} placeholder="e.g., Indoor Playground Ticket" value={rewardName} onChangeText={setRewardName} placeholderTextColor={colors.textTertiary} />
               <Text style={styles.inputLabel}>Description</Text>
               <TextInput style={[styles.textInput, { height: 60 }]} placeholder="What does the kid get?" value={rewardDesc} onChangeText={setRewardDesc} multiline placeholderTextColor={colors.textTertiary} />
             </Card>

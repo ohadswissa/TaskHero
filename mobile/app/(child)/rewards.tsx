@@ -7,7 +7,7 @@ import { Card } from '@/components/common';
 import { colors, spacing, borderRadius, fonts, shadows } from '@/theme';
 
 const AVAILABLE_REWARDS = [
-  { id: '1', name: 'Jumburry Ticket', icon: '🎟️', description: '1 ticket to Jumburry indoor playground', coinsRequired: 200, category: 'tickets', categoryColor: '#8B5CF6' },
+  { id: '1', name: 'Indoor Playground Ticket', icon: '🎟️', description: '1 ticket to indoor playground', coinsRequired: 200, category: 'tickets', categoryColor: '#8B5CF6' },
   { id: '2', name: 'Ice Cream', icon: '🍦', description: 'One scoop of your favorite flavor', coinsRequired: 50, category: 'food', categoryColor: '#EC4899' },
   { id: '3', name: 'Playground Visit', icon: '🎡', description: 'Trip to the playground of your choice', coinsRequired: 150, category: 'activity', categoryColor: '#F59E0B' },
   { id: '4', name: '30 min Screen Time', icon: '📱', description: '30 minutes of extra screen time', coinsRequired: 80, category: 'digital', categoryColor: '#3B82F6' },
