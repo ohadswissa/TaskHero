@@ -50,15 +50,18 @@ export default function RegisterScreen() {
     setError(null);
 
     try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       await register({
         email: data.email,
         password: data.password,
         displayName: data.displayName,
         familyName: data.familyName,
+        timezone,
       });
       router.replace('/');
-    } catch (err: any) {
-      setError(err.message || 'Registration failed. Please try again.');
+    } catch (err: unknown) {
+      const { extractApiError } = await import('@/api/client');
+      setError(extractApiError(err, 'Registration failed. Please try again.'));
     } finally {
       setIsLoading(false);
     }

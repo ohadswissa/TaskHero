@@ -1,310 +1,586 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Modal,
+  Alert,
+  RefreshControl,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Gradient } from '@/components/common/Gradient';
-import { Card } from '@/components/common';
-import { Button } from '@/components/common/Button';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Card, Button, Input, ScreenHeader } from '@/components/common';
+import { rewardsApi } from '@/api/rewards.api';
+import { childrenApi } from '@/api/children.api';
+import { extractApiError } from '@/api/client';
+import type { ChildProfile, Reward, RewardStatus } from '@/api/types';
 import { colors, spacing, borderRadius, fonts, shadows } from '@/theme';
+import { RewardCelebration } from '@/components/rewards/RewardCelebration';
 
-const REWARD_CATEGORIES = [
-  { id: 'tickets', label: 'Tickets', icon: '🎟️', color: '#8B5CF6' },
-  { id: 'food', label: 'Food & Treats', icon: '🍦', color: '#EC4899' },
-  { id: 'activity', label: 'Activities', icon: '🎪', color: '#F59E0B' },
-  { id: 'digital', label: 'Screen Time', icon: '📱', color: '#3B82F6' },
-  { id: 'other', label: 'Other', icon: '🎁', color: '#10B981' },
+// TODO(monorepo): import this constant from packages/shared-types when the
+// workspace package is wired up. Mirrors backend/src/common/utils/progression.ts
+// REWARD_GOAL_TEMPLATES.
+const REWARD_TEMPLATES: { name: string; coinThreshold: number; icon: string }[] = [
+  { name: 'Pizza night', coinThreshold: 80, icon: '🍕' },
+  { name: 'Extra screen time (30 min)', coinThreshold: 40, icon: '📱' },
+  { name: 'Trip to the park / playground', coinThreshold: 60, icon: '🎡' },
+  { name: 'Choose the movie tonight', coinThreshold: 30, icon: '🎬' },
+  { name: 'New book (child picks)', coinThreshold: 100, icon: '📚' },
 ];
-
-const SUGGESTED_REWARDS = [
-  { name: 'Indoor Playground Ticket', category: 'tickets', icon: '🎟️', description: '1 ticket to indoor playground', coinsRequired: 200 },
-  { name: 'Playground Visit', category: 'activity', icon: '🎡', description: 'Trip to the playground of choice', coinsRequired: 150 },
-  { name: 'Ice Cream', category: 'food', icon: '🍦', description: 'One scoop of ice cream', coinsRequired: 50 },
-  { name: 'Movie Night', category: 'activity', icon: '🎬', description: 'Choose a family movie', coinsRequired: 100 },
-  { name: '30 min Screen Time', category: 'digital', icon: '📱', description: '30 minutes of extra screen time', coinsRequired: 80 },
-  { name: 'Pizza Party', category: 'food', icon: '🍕', description: 'Pizza for dinner', coinsRequired: 120 },
-  { name: 'Toy Store Visit', category: 'other', icon: '🧸', description: 'Pick a small toy (up to ₪50)', coinsRequired: 300 },
-  { name: 'Trampoline Park', category: 'tickets', icon: '🤸', description: '1 hour at trampoline park', coinsRequired: 250 },
-];
-
-interface Reward {
-  id: string;
-  name: string;
-  category: string;
-  icon: string;
-  description: string;
-  coinsRequired: number;
-  isActive: boolean;
-}
 
 export default function ParentRewardsScreen() {
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
-  const [rewardName, setRewardName] = useState('');
-  const [rewardDesc, setRewardDesc] = useState('');
-  const [rewardCategory, setRewardCategory] = useState('tickets');
-  const [rewardCoins, setRewardCoins] = useState('100');
-  const [rewards, setRewards] = useState<Reward[]>([
-    { id: '1', name: 'Indoor Playground Ticket', category: 'tickets', icon: '🎟️', description: '1 ticket to indoor playground', coinsRequired: 200, isActive: true },
-    { id: '2', name: 'Ice Cream', category: 'food', icon: '🍦', description: 'One scoop of ice cream', coinsRequired: 50, isActive: true },
-    { id: '3', name: 'Playground Visit', category: 'activity', icon: '🎡', description: 'Trip to the playground', coinsRequired: 150, isActive: true },
-    { id: '4', name: '30 min Screen Time', category: 'digital', icon: '📱', description: 'Extra screen time', coinsRequired: 80, isActive: true },
-  ]);
+  const [selectedTemplate, setSelectedTemplate] = useState<number | null>(0);
+  const [customName, setCustomName] = useState('');
+  const [customTarget, setCustomTarget] = useState(50);
+  const [useCustom, setUseCustom] = useState(false);
+  const [childProfileId, setChildProfileId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  const handleCreate = () => {
-    if (!rewardName.trim()) {
-      Alert.alert('Missing Name', 'Please enter a reward name');
+  const rewardsQ = useQuery({
+    queryKey: ['rewards', 'family'],
+    queryFn: rewardsApi.listFamilyRewards,
+  });
+  const childrenQ = useQuery({ queryKey: ['children'], queryFn: childrenApi.listChildren });
+
+  const createMut = useMutation({
+    mutationFn: rewardsApi.createReward,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rewards', 'family'] });
+      setShowCreate(false);
+      Alert.alert('Reward goal created', 'Your hero can now work toward this goal!');
+      resetForm();
+    },
+    onError: (err) => setFormError(extractApiError(err)),
+  });
+
+  const [celebrateName, setCelebrateName] = useState<string | null>(null);
+
+  const redeemMut = useMutation({
+    mutationFn: (id: string) => rewardsApi.redeemReward(id),
+    onMutate: (id: string) => {
+      const all: Reward[] = [
+        ...(rewardsQ.data?.active ?? []),
+        ...(rewardsQ.data?.draft ?? []),
+      ];
+      const r = all.find((x) => x.id === id);
+      if (r) setCelebrateName(r.name);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rewards', 'family'] }),
+    onError: (err) => Alert.alert('Redeem failed', extractApiError(err)),
+  });
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['rewards', 'family'] }),
+      queryClient.invalidateQueries({ queryKey: ['children'] }),
+    ]);
+    setRefreshing(false);
+  };
+
+  const resetForm = () => {
+    setSelectedTemplate(0);
+    setUseCustom(false);
+    setCustomName('');
+    setCustomTarget(50);
+    setChildProfileId(null);
+    setFormError(null);
+  };
+
+  // Group rewards by child
+  const children = childrenQ.data ?? [];
+  const rewardsByChild = useMemo(() => {
+    const map = new Map<string | null, Reward[]>();
+    const all: Reward[] = [
+      ...(rewardsQ.data?.active ?? []),
+      ...(rewardsQ.data?.redeemed ?? []),
+      ...(rewardsQ.data?.archived ?? []),
+      ...(rewardsQ.data?.draft ?? []),
+    ];
+    for (const r of all) {
+      const key = r.targetChildProfileId;
+      const arr = map.get(key) ?? [];
+      arr.push(r);
+      map.set(key, arr);
+    }
+    return map;
+  }, [rewardsQ.data]);
+
+  const childHasActive = (cid: string): boolean =>
+    (rewardsQ.data?.active ?? []).some((r) => r.targetChildProfileId === cid);
+
+  const submit = () => {
+    setFormError(null);
+    if (!childProfileId) {
+      setFormError('Pick a hero for this reward goal.');
       return;
     }
-    const cat = REWARD_CATEGORIES.find(c => c.id === rewardCategory);
-    const newReward: Reward = {
-      id: String(rewards.length + 1),
-      name: rewardName,
-      category: rewardCategory,
-      icon: cat?.icon || '🎁',
-      description: rewardDesc,
-      coinsRequired: parseInt(rewardCoins) || 100,
-      isActive: true,
-    };
-    setRewards([newReward, ...rewards]);
-    setShowCreate(false);
-    setRewardName('');
-    setRewardDesc('');
-    setRewardCoins('100');
+    let name: string;
+    let target: number;
+    if (useCustom) {
+      name = customName.trim();
+      target = customTarget;
+      if (name.length < 1 || name.length > 80) {
+        setFormError('Reward name must be 1–80 characters.');
+        return;
+      }
+      if (target < 1) {
+        setFormError('Target must be at least 1 mission.');
+        return;
+      }
+    } else {
+      if (selectedTemplate === null) {
+        setFormError('Pick a template or build your own.');
+        return;
+      }
+      const tpl = REWARD_TEMPLATES[selectedTemplate];
+      name = tpl.name;
+      target = tpl.coinThreshold;
+    }
+
+    if (childHasActive(childProfileId)) {
+      const childName = children.find((c) => c.id === childProfileId)?.displayName ?? 'This hero';
+      Alert.alert(
+        'Replace existing reward?',
+        `${childName} already has an active goal — creating a new one will archive the previous goal.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Replace',
+            style: 'destructive',
+            onPress: () =>
+              createMut.mutate({ childProfileId, name, targetMissions: target }),
+          },
+        ],
+      );
+      return;
+    }
+
+    createMut.mutate({ childProfileId, name, targetMissions: target });
   };
-
-  const applySuggestion = (s: typeof SUGGESTED_REWARDS[0]) => {
-    setRewardName(s.name);
-    setRewardDesc(s.description);
-    setRewardCategory(s.category);
-    setRewardCoins(String(s.coinsRequired));
-  };
-
-  if (showCreate) {
-    return (
-      <SafeAreaView style={styles.container} edges={['top']}>
-        <ScrollView showsVerticalScrollIndicator={false}>
-          <View style={styles.createHeader}>
-            <TouchableOpacity onPress={() => setShowCreate(false)} style={styles.backBtn}>
-              <Ionicons name="arrow-back" size={24} color={colors.text} />
-            </TouchableOpacity>
-            <Text style={styles.createTitle}>Add Reward</Text>
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* Suggestions */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>🎯 Popular Rewards</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {SUGGESTED_REWARDS.map((s, i) => (
-                <TouchableOpacity key={i} style={styles.suggestionCard} onPress={() => applySuggestion(s)}>
-                  <Text style={styles.suggestionIcon}>{s.icon}</Text>
-                  <Text style={styles.suggestionName}>{s.name}</Text>
-                  <Text style={styles.suggestionCost}>🪙 {s.coinsRequired}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-
-          {/* Form */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Reward Details</Text>
-            <Card variant="elevated" style={styles.formCard}>
-              <Text style={styles.inputLabel}>Name *</Text>
-              <TextInput style={styles.textInput} placeholder="e.g., Indoor Playground Ticket" value={rewardName} onChangeText={setRewardName} placeholderTextColor={colors.textTertiary} />
-              <Text style={styles.inputLabel}>Description</Text>
-              <TextInput style={[styles.textInput, { height: 60 }]} placeholder="What does the kid get?" value={rewardDesc} onChangeText={setRewardDesc} multiline placeholderTextColor={colors.textTertiary} />
-            </Card>
-          </View>
-
-          {/* Category */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>Category</Text>
-            <View style={styles.catGrid}>
-              {REWARD_CATEGORIES.map(cat => (
-                <TouchableOpacity
-                  key={cat.id}
-                  style={[styles.catChip, rewardCategory === cat.id && { backgroundColor: cat.color, borderColor: cat.color }]}
-                  onPress={() => setRewardCategory(cat.id)}
-                >
-                  <Text style={styles.catIcon}>{cat.icon}</Text>
-                  <Text style={[styles.catLabel, rewardCategory === cat.id && { color: '#fff' }]}>{cat.label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-
-          {/* Coins cost */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>🪙 Coins Required</Text>
-            <Card variant="elevated" style={styles.coinCard}>
-              <Text style={styles.coinCardLabel}>How many coins should the child save?</Text>
-              <View style={styles.coinInputRow}>
-                {[50, 100, 150, 200, 300].map(v => (
-                  <TouchableOpacity
-                    key={v}
-                    style={[styles.coinPreset, rewardCoins === String(v) && styles.coinPresetActive]}
-                    onPress={() => setRewardCoins(String(v))}
-                  >
-                    <Text style={[styles.coinPresetText, rewardCoins === String(v) && { color: '#fff' }]}>{v}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <View style={styles.coinCustomRow}>
-                <Text style={styles.coinCustomLabel}>Custom:</Text>
-                <TextInput
-                  style={styles.coinCustomInput}
-                  value={rewardCoins}
-                  onChangeText={setRewardCoins}
-                  keyboardType="numeric"
-                  placeholder="100"
-                  placeholderTextColor={colors.textTertiary}
-                />
-                <Text style={styles.coinCustomLabel}>🪙</Text>
-              </View>
-            </Card>
-          </View>
-
-          <View style={styles.section}>
-            <Button title="🎁 Add Reward" onPress={handleCreate} style={{ marginBottom: spacing.xxxl }} />
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <Gradient colors={['#8B5CF6', '#EC4899']} style={styles.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-          <View style={styles.headerContent}>
-            <View>
-              <Text style={styles.headerTitle}>Rewards 🎁</Text>
-              <Text style={styles.headerSub}>Physical prizes your kids can earn</Text>
-            </View>
-            <TouchableOpacity style={styles.addBtn} onPress={() => setShowCreate(true)}>
-              <Ionicons name="add" size={28} color="#8B5CF6" />
-            </TouchableOpacity>
-          </View>
+      <ScreenHeader
+        title="Reward Goals"
+        subtitle="Coin thresholds your heroes can work toward."
+      />
 
-          {/* Info banner */}
-          <View style={styles.infoBanner}>
-            <Ionicons name="information-circle" size={18} color="rgba(255,255,255,0.9)" />
-            <Text style={styles.infoText}>Kids earn coins by completing missions. Set coin costs for real-world rewards!</Text>
-          </View>
-        </Gradient>
+      <ScrollView
+        contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xl * 2 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        {children.length === 0 && (
+          <Card variant="outlined" padding="lg">
+            <Text style={styles.empty}>Add a hero first before creating reward goals.</Text>
+          </Card>
+        )}
 
-        {/* Reward list */}
-        <View style={styles.rewardList}>
-          {rewards.map(reward => {
-            const cat = REWARD_CATEGORIES.find(c => c.id === reward.category);
-            return (
-              <Card key={reward.id} variant="elevated" style={styles.rewardCard}>
-                <View style={styles.rewardRow}>
-                  <View style={[styles.rewardIconBox, { backgroundColor: (cat?.color || '#8B5CF6') + '20' }]}>
-                    <Text style={{ fontSize: 28 }}>{reward.icon}</Text>
-                  </View>
-                  <View style={styles.rewardInfo}>
-                    <Text style={styles.rewardName}>{reward.name}</Text>
-                    <Text style={styles.rewardDesc}>{reward.description}</Text>
-                    <View style={styles.rewardMeta}>
-                      <View style={styles.rewardCoinBadge}>
-                        <Text style={styles.rewardCoinText}>🪙 {reward.coinsRequired} coins</Text>
-                      </View>
-                      <View style={[styles.rewardCatBadge, { backgroundColor: (cat?.color || '#8B5CF6') + '20' }]}>
-                        <Text style={[styles.rewardCatText, { color: cat?.color || '#8B5CF6' }]}>{cat?.label}</Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
+        {children.map((c) => (
+          <View key={c.id} style={styles.childGroup}>
+            <Text style={styles.childGroupTitle}>{c.displayName}</Text>
+            {(rewardsByChild.get(c.id) ?? []).length === 0 ? (
+              <Card variant="outlined" padding="md">
+                <Text style={styles.empty}>No reward goal yet.</Text>
               </Card>
-            );
-          })}
-        </View>
+            ) : (
+              (rewardsByChild.get(c.id) ?? []).map((r) => (
+                <RewardRow
+                  key={r.id}
+                  reward={r}
+                  onRedeem={() => redeemMut.mutate(r.id)}
+                  redeeming={redeemMut.isPending && redeemMut.variables === r.id}
+                />
+              ))
+            )}
+          </View>
+        ))}
 
-        <View style={{ height: spacing.xxxl }} />
+        {children.length > 0 && (
+          <TouchableOpacity style={styles.addCta} onPress={() => setShowCreate(true)}>
+            <Ionicons name="gift" size={20} color={colors.surface} />
+            <Text style={styles.addCtaText}>New Reward Goal</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
+
+      {/* Create modal */}
+      <Modal
+        visible={showCreate}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowCreate(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalRoot}
+        >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            onPress={() => setShowCreate(false)}
+          />
+          <ScrollView
+            style={styles.sheet}
+            contentContainerStyle={{ paddingBottom: spacing.xl }}
+          >
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>New Reward Goal</Text>
+            <Text style={styles.sheetSub}>
+              Pick a template or build your own goal in coins.
+            </Text>
+
+            {/* Templates */}
+            {!useCustom && (
+              <View style={styles.tplGrid}>
+                {REWARD_TEMPLATES.map((t, i) => {
+                  const active = selectedTemplate === i;
+                  return (
+                    <TouchableOpacity
+                      key={t.name}
+                      style={[styles.tplCard, active && styles.tplCardActive]}
+                      onPress={() => setSelectedTemplate(i)}
+                    >
+                      <Text style={styles.tplIcon}>{t.icon}</Text>
+                      <Text style={[styles.tplName, active && { color: colors.surface }]}>
+                        {t.name}
+                      </Text>
+                      <Text style={[styles.tplCoins, active && { color: colors.surface }]}>
+                        🪙 {t.coinThreshold}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={styles.toggleCustom}
+              onPress={() => setUseCustom((v) => !v)}
+            >
+              <Ionicons
+                name={useCustom ? 'arrow-back' : 'create-outline'}
+                size={16}
+                color={colors.accent}
+              />
+              <Text style={styles.toggleCustomText}>
+                {useCustom ? 'Back to templates' : 'Or build your own'}
+              </Text>
+            </TouchableOpacity>
+
+            {useCustom && (
+              <View>
+                <Input
+                  label="Reward name"
+                  placeholder="e.g., Family arcade trip"
+                  value={customName}
+                  onChangeText={setCustomName}
+                  maxLength={80}
+                />
+                <Text style={styles.fieldLabel}>Target (coins)</Text>
+                <View style={styles.stepperRow}>
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setCustomTarget((v) => Math.max(1, v - 10))}
+                  >
+                    <Ionicons name="remove" size={18} color={colors.primary} />
+                  </TouchableOpacity>
+                  <Text style={styles.stepperValue}>{customTarget}</Text>
+                  <TouchableOpacity
+                    style={styles.stepperBtn}
+                    onPress={() => setCustomTarget((v) => v + 10)}
+                  >
+                    <Ionicons name="add" size={18} color={colors.primary} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            <Text style={styles.fieldLabel}>For which hero?</Text>
+            <View style={styles.childChips}>
+              {children.map((c) => {
+                const active = childProfileId === c.id;
+                const hasActive = childHasActive(c.id);
+                return (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[
+                      styles.childChip,
+                      active && styles.childChipActive,
+                      hasActive && styles.childChipWarn,
+                    ]}
+                    onPress={() => setChildProfileId(c.id)}
+                  >
+                    <Text style={[styles.childChipText, active && { color: colors.surface }]}>
+                      {c.displayName}
+                    </Text>
+                    {hasActive && (
+                      <View style={styles.warnDot}>
+                        <Text style={styles.warnDotText}>!</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {childProfileId && childHasActive(childProfileId) && (
+              <View style={styles.warnBanner}>
+                <Ionicons name="warning-outline" size={16} color={colors.warning} />
+                <Text style={styles.warnText}>
+                  {children.find((c) => c.id === childProfileId)?.displayName} already has an
+                  active goal — creating a new one will replace it.
+                </Text>
+              </View>
+            )}
+
+            {formError && <Text style={styles.formError}>{formError}</Text>}
+
+            <Button
+              title="Create Goal"
+              onPress={submit}
+              loading={createMut.isPending}
+              style={{ marginTop: spacing.md }}
+            />
+            <Button
+              title="Cancel"
+              variant="ghost"
+              onPress={() => setShowCreate(false)}
+              style={{ marginTop: spacing.xs }}
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <RewardCelebration
+        visible={!!celebrateName}
+        rewardName={celebrateName ?? ''}
+        onDismiss={() => setCelebrateName(null)}
+      />
     </SafeAreaView>
+  );
+}
+
+// =========================================================================
+// Reward row
+// =========================================================================
+
+function RewardRow({
+  reward,
+  onRedeem,
+  redeeming,
+}: {
+  reward: Reward;
+  onRedeem: () => void;
+  redeeming: boolean;
+}) {
+  const status: RewardStatus = reward.status;
+  const statusColor =
+    status === 'ACTIVE'
+      ? colors.accent
+      : status === 'REDEEMED'
+        ? colors.success
+        : colors.textSecondary;
+  return (
+    <Card variant="elevated" padding="md" style={{ marginBottom: spacing.sm }}>
+      <View style={styles.rewardHead}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rewardName}>{reward.name}</Text>
+          <Text style={styles.rewardTarget}>🪙 {reward.conditionValue} coins</Text>
+        </View>
+        <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
+          <Text style={styles.statusBadgeText}>{status}</Text>
+        </View>
+      </View>
+      {status === 'ACTIVE' && (
+        <TouchableOpacity
+          style={styles.redeemBtn}
+          onPress={onRedeem}
+          disabled={redeeming}
+        >
+          <Text style={styles.redeemBtnText}>
+            {redeeming ? 'Redeeming…' : 'Mark redeemed'}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  header: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.xl },
-  headerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  headerTitle: { fontFamily: fonts.extraBold, fontSize: 28, color: colors.white },
-  headerSub: { fontFamily: fonts.regular, fontSize: 14, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
-  addBtn: {
-    width: 48, height: 48, borderRadius: 16, backgroundColor: colors.white,
-    alignItems: 'center', justifyContent: 'center', ...shadows.md,
-  },
-  infoBanner: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: borderRadius.lg, padding: spacing.md, marginTop: spacing.md, gap: spacing.sm,
-  },
-  infoText: { fontFamily: fonts.regular, fontSize: 13, color: 'rgba(255,255,255,0.9)', flex: 1 },
 
-  rewardList: { paddingHorizontal: spacing.lg, marginTop: spacing.lg },
-  rewardCard: { marginBottom: spacing.md },
-  rewardRow: { flexDirection: 'row', alignItems: 'flex-start' },
-  rewardIconBox: {
-    width: 56, height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginRight: spacing.md,
+  childGroup: { marginBottom: spacing.md },
+  childGroupTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 16,
+    color: colors.primary,
+    marginBottom: spacing.xs,
   },
-  rewardInfo: { flex: 1 },
-  rewardName: { fontFamily: fonts.bold, fontSize: 16, color: colors.text },
-  rewardDesc: { fontFamily: fonts.regular, fontSize: 13, color: colors.textSecondary, marginTop: 2 },
-  rewardMeta: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-  rewardCoinBadge: { backgroundColor: '#FEF3C7', paddingHorizontal: 10, paddingVertical: 3, borderRadius: borderRadius.full },
-  rewardCoinText: { fontFamily: fonts.bold, fontSize: 12, color: '#D97706' },
-  rewardCatBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: borderRadius.full },
-  rewardCatText: { fontFamily: fonts.semiBold, fontSize: 12 },
+  empty: { fontFamily: fonts.regular, fontSize: 13, color: colors.textSecondary },
 
-  // Create view
-  createHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+  rewardHead: { flexDirection: 'row', alignItems: 'center' },
+  rewardName: { fontFamily: fonts.bold, fontSize: 15, color: colors.primary },
+  rewardTarget: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.textSecondary, marginTop: 2 },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: borderRadius.sm,
   },
-  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  createTitle: { fontFamily: fonts.extraBold, fontSize: 22, color: colors.text },
-  section: { paddingHorizontal: spacing.lg, marginBottom: spacing.lg },
-  sectionLabel: { fontFamily: fonts.bold, fontSize: 16, color: colors.text, marginBottom: spacing.md },
-  formCard: { padding: spacing.lg },
-  inputLabel: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.xs },
-  textInput: {
-    fontFamily: fonts.regular, fontSize: 16, color: colors.text,
-    backgroundColor: colors.backgroundSecondary, borderRadius: borderRadius.lg,
-    paddingHorizontal: spacing.md, paddingVertical: 12, marginBottom: spacing.md,
+  statusBadgeText: { fontFamily: fonts.bold, fontSize: 10, color: colors.surface, letterSpacing: 0.5 },
+  redeemBtn: {
+    alignSelf: 'flex-end',
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 8,
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.md,
   },
-  catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  catChip: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10,
-    borderRadius: borderRadius.xl, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.border,
-    gap: 6, ...shadows.sm,
-  },
-  catIcon: { fontSize: 18 },
-  catLabel: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.text },
+  redeemBtnText: { fontFamily: fonts.bold, fontSize: 12, color: colors.surface },
 
-  coinCard: { padding: spacing.lg },
-  coinCardLabel: { fontFamily: fonts.regular, fontSize: 13, color: colors.textSecondary, marginBottom: spacing.md },
-  coinInputRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
-  coinPreset: {
-    flex: 1, paddingVertical: 10, borderRadius: borderRadius.lg,
-    backgroundColor: colors.backgroundSecondary, alignItems: 'center',
+  addCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    borderRadius: borderRadius.lg,
+    marginTop: spacing.md,
+    ...shadows.sm,
   },
-  coinPresetActive: { backgroundColor: colors.primary },
-  coinPresetText: { fontFamily: fonts.bold, fontSize: 14, color: colors.text },
-  coinCustomRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  coinCustomLabel: { fontFamily: fonts.semiBold, fontSize: 14, color: colors.textSecondary },
-  coinCustomInput: {
-    fontFamily: fonts.bold, fontSize: 20, color: colors.text, textAlign: 'center',
-    width: 80, borderBottomWidth: 2, borderBottomColor: colors.primary, paddingVertical: 4,
+  addCtaText: { fontFamily: fonts.bold, fontSize: 15, color: colors.surface },
+
+  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15,27,61,0.45)' },
+  sheet: {
+    maxHeight: '85%',
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: spacing.sm,
+  },
+  sheetTitle: { fontFamily: fonts.extraBold, fontSize: 22, color: colors.primary },
+  sheetSub: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 4,
+    marginBottom: spacing.md,
   },
 
-  suggestionCard: {
-    alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12,
-    borderRadius: borderRadius.xl, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border,
-    marginRight: spacing.sm, width: 110, ...shadows.sm,
+  tplGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.sm },
+  tplCard: {
+    width: '48%',
+    backgroundColor: colors.background,
+    borderRadius: borderRadius.lg,
+    padding: spacing.sm,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.border,
   },
-  suggestionIcon: { fontSize: 24, marginBottom: 4 },
-  suggestionName: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.text, textAlign: 'center' },
-  suggestionCost: { fontFamily: fonts.bold, fontSize: 11, color: colors.secondary, marginTop: 4 },
+  tplCardActive: { backgroundColor: colors.primary, borderColor: colors.accent },
+  tplIcon: { fontSize: 26, marginBottom: 4 },
+  tplName: { fontFamily: fonts.bold, fontSize: 12, color: colors.primary, textAlign: 'center' },
+  tplCoins: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.accent, marginTop: 4 },
+
+  toggleCustom: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    paddingVertical: 8,
+    marginBottom: spacing.sm,
+  },
+  toggleCustomText: { fontFamily: fonts.bold, fontSize: 13, color: colors.accent },
+
+  fieldLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: colors.primary,
+    marginBottom: 6,
+    marginTop: spacing.sm,
+  },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  stepperBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  stepperValue: {
+    fontFamily: fonts.extraBold,
+    fontSize: 22,
+    color: colors.primary,
+    minWidth: 50,
+    textAlign: 'center',
+  },
+
+  childChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.sm },
+  childChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: borderRadius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+  },
+  childChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  childChipWarn: { borderColor: colors.warning },
+  childChipText: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.primary },
+  warnDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.warning,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  warnDotText: { fontFamily: fonts.bold, fontSize: 10, color: colors.surface },
+
+  warnBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.warningLight,
+    padding: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.sm,
+  },
+  warnText: { flex: 1, fontFamily: fonts.regular, fontSize: 12, color: colors.primary },
+
+  formError: {
+    color: colors.error,
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    marginTop: spacing.sm,
+  },
 });

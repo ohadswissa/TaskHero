@@ -26,6 +26,7 @@ interface AuthState {
     password: string;
     displayName: string;
     familyName?: string;
+    timezone?: string;
   }) => Promise<void>;
   logout: () => Promise<void>;
   refreshTokens: () => Promise<boolean>;

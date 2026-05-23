@@ -47,8 +47,9 @@ export default function LoginScreen() {
     try {
       await login(data.email, data.password);
       router.replace('/');
-    } catch (err: any) {
-      setError(err.message || 'Login failed. Please try again.');
+    } catch (err: unknown) {
+      const { extractApiError } = await import('@/api/client');
+      setError(extractApiError(err, 'Login failed. Please try again.'));
     } finally {
       setIsLoading(false);
     }

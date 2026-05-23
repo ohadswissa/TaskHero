@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { View } from 'react-native';
 import { colors, shadows, fonts } from '@/theme';
 
 export default function ParentLayout() {
@@ -7,28 +8,41 @@ export default function ParentLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textTertiary,
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textSecondary,
         tabBarStyle: {
-          backgroundColor: colors.white,
+          backgroundColor: colors.surface,
           borderTopWidth: 0,
           ...shadows.md,
-          height: 64,
-          paddingBottom: 8,
-          paddingTop: 6,
+          height: 68,
+          paddingBottom: 10,
+          paddingTop: 8,
         },
         tabBarLabelStyle: {
           fontFamily: fonts.semiBold,
           fontSize: 10,
+          marginTop: 2,
+        },
+        tabBarItemStyle: {
+          paddingVertical: 4,
         },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
+          title: 'Home',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="home" color={color} focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="children"
+        options={{
+          title: 'Heroes',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="people" color={color} focused={focused} />
           ),
         }}
       />
@@ -36,8 +50,8 @@ export default function ParentLayout() {
         name="missions"
         options={{
           title: 'Missions',
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="flag-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="flag" color={color} focused={focused} />
           ),
         }}
       />
@@ -45,35 +59,60 @@ export default function ParentLayout() {
         name="rewards"
         options={{
           title: 'Rewards',
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="gift-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="gift" color={color} focused={focused} />
           ),
         }}
       />
       <Tabs.Screen
         name="approvals"
         options={{
-          title: 'Approve',
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="checkmark-circle-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="children"
-        options={{
-          title: 'Children',
-          tabBarIcon: ({ color, size }: { color: string; size: number }) => (
-            <Ionicons name="people-outline" size={size} color={color} />
+          title: 'Approvals',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="checkmark-circle" color={color} focused={focused} />
           ),
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
-          href: null,
+          title: 'Settings',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="settings" color={color} focused={focused} />
+          ),
         }}
       />
     </Tabs>
+  );
+}
+
+function TabIcon({
+  name,
+  color,
+  focused,
+}: {
+  name: keyof typeof Ionicons.glyphMap | string;
+  color: string;
+  focused: boolean;
+}) {
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center', minWidth: 32 }}>
+      <Ionicons
+        name={(focused ? name : `${name}-outline`) as keyof typeof Ionicons.glyphMap}
+        size={22}
+        color={color}
+      />
+      {focused && (
+        <View
+          style={{
+            width: 18,
+            height: 3,
+            borderRadius: 2,
+            backgroundColor: colors.accent,
+            marginTop: 4,
+          }}
+        />
+      )}
+    </View>
   );
 }

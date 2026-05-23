@@ -1,178 +1,285 @@
-import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated } from 'react-native';
-import { Gradient as LinearGradient } from '@/components/common/Gradient';
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  RefreshControl,
+  Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { colors, spacing, gradients, borderRadius, shadows, fonts } from '@/theme';
-import { Card } from '@/components/common';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
+import { Card } from '@/components/common';
+import { childrenApi } from '@/api/children.api';
+import { familiesApi } from '@/api/families.api';
+import { approvalsApi } from '@/api/approvals.api';
+import { progressionApi } from '@/api/progression.api';
+import { queryKeys } from '@/api/queryKeys';
+import type { ChildProfile } from '@/api/types';
+import type { TraitSummary } from '@/api/progression.api';
+import { colors, spacing, borderRadius, fonts, shadows } from '@/theme';
+import { TraitRadar } from '@/components/progression/TraitRadar';
 
 export default function ParentDashboard() {
   const { user } = useAuthStore();
   const displayName = user?.displayName || 'Parent';
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
-  }, []);
+  const familyQ = useQuery({ queryKey: ['family', 'me'], queryFn: familiesApi.getMyFamily });
+  const childrenQ = useQuery({ queryKey: ['children'], queryFn: childrenApi.listChildren });
+  const pendingQ = useQuery({
+    queryKey: [...queryKeys.approvals.pending],
+    queryFn: approvalsApi.listPending,
+  });
+
+  const childIds = (childrenQ.data ?? []).map((c) => c.id);
+  const traitQueries = useQueries({
+    queries: childIds.map((cid) => ({
+      queryKey: queryKeys.progression.summary(cid),
+      queryFn: () => progressionApi.traitSummary(cid),
+      staleTime: 1000 * 60,
+    })),
+  });
+  const traitByChild: Record<string, TraitSummary | undefined> = {};
+  childIds.forEach((cid, i) => {
+    traitByChild[cid] = traitQueries[i]?.data;
+  });
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['family', 'me'] }),
+      queryClient.invalidateQueries({ queryKey: ['children'] }),
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.pending] }),
+      ...childIds.map((cid) =>
+        queryClient.invalidateQueries({ queryKey: queryKeys.progression.summary(cid) }),
+      ),
+    ]);
+    setRefreshing(false);
+  };
+
+  const copyCode = async () => {
+    const code = familyQ.data?.inviteCode;
+    if (!code) return;
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        // expo-clipboard not installed; soft fallback — code is already visible.
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  };
+
+  const pendingCount = pendingQ.data?.length ?? 0;
+  const children: ChildProfile[] = childrenQ.data ?? [];
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: spacing.xl * 2 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
+        {/* Greeting block */}
+        <View style={styles.heroBlock}>
+          <Text style={styles.greeting}>Hello,</Text>
+          <Text style={styles.displayName}>{displayName} 👋</Text>
+          <View style={styles.underline} />
 
-        {/* Gradient Header */}
-        <LinearGradient colors={['#4F46E5', '#6366F1', '#818CF8']} style={styles.header} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-          <View style={styles.decorCircle1} />
-          <View style={styles.decorCircle2} />
-
-          <View style={styles.headerTop}>
-            <View>
-              <Text style={styles.greeting}>{greeting} 👋</Text>
-              <Text style={styles.displayName}>{displayName}</Text>
-            </View>
-            <TouchableOpacity style={styles.avatarCircle} onPress={() => router.push('/(parent)/settings' as any)}>
-              <Text style={styles.avatarLetter}>{displayName.charAt(0).toUpperCase()}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Stat pills */}
-          <View style={styles.statPills}>
-            <View style={styles.statPill}>
-              <Text style={styles.statPillValue}>5</Text>
-              <Text style={styles.statPillLabel}>Active Missions</Text>
-            </View>
-            <View style={styles.statPillDivider} />
-            <View style={styles.statPill}>
-              <Text style={styles.statPillValue}>2</Text>
-              <Text style={styles.statPillLabel}>Pending</Text>
-            </View>
-            <View style={styles.statPillDivider} />
-            <View style={styles.statPill}>
-              <Text style={styles.statPillValue}>4</Text>
-              <Text style={styles.statPillLabel}>Rewards</Text>
-            </View>
-          </View>
-        </LinearGradient>
-
-        {/* Quick actions */}
-        <Animated.View style={[styles.section, { opacity: fadeAnim }]}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickActions}>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(parent)/missions')}>
-              <LinearGradient colors={['#818CF8', '#6366F1']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Ionicons name="add-circle-outline" size={24} color={colors.white} />
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>New Mission</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(parent)/rewards' as any)}>
-              <LinearGradient colors={['#EC4899', '#8B5CF6']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Ionicons name="gift-outline" size={24} color={colors.white} />
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>Rewards</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(parent)/approvals')}>
-              <LinearGradient colors={['#34D399', '#10B981']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Ionicons name="checkmark-circle-outline" size={24} color={colors.white} />
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>Approvals</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(parent)/children')}>
-              <LinearGradient colors={['#FBBF24', '#F59E0B']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Ionicons name="people-outline" size={24} color={colors.white} />
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>Children</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-
-        {/* Children's Progress */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Children's Progress</Text>
-            <TouchableOpacity onPress={() => router.push('/(parent)/children')}>
-              <Text style={styles.seeAll}>See all →</Text>
-            </TouchableOpacity>
-          </View>
-
-          {[
-            { name: 'Alex', emoji: '🦸', level: 3, xp: '150/250', streak: 5, progress: 0.6, missions: 2 },
-            { name: 'Maya', emoji: '🧚', level: 2, xp: '80/150', streak: 3, progress: 0.53, missions: 1 },
-          ].map((child, i) => (
-            <Card key={i} variant="elevated" style={styles.childCard}>
-              <View style={styles.childCardInner}>
-                <View style={styles.childAvatar}>
-                  <Text style={styles.childAvatarEmoji}>{child.emoji}</Text>
-                </View>
-                <View style={styles.childInfo}>
-                  <Text style={styles.childName}>{child.name}</Text>
-                  <Text style={styles.childLevel}>Level {child.level} Hero · {child.missions} missions today</Text>
-                  <View style={styles.xpRow}>
-                    <View style={styles.xpBarBg}>
-                      <View style={[styles.xpBarFill, { width: `${child.progress * 100}%` }]} />
-                    </View>
-                    <Text style={styles.xpLabel}>{child.xp} XP</Text>
-                  </View>
-                </View>
-                <View style={styles.childBadge}>
-                  <Text style={styles.childBadgeText}>🔥{child.streak}</Text>
-                </View>
+          {/* Family code chip */}
+          {familyQ.data && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.familyChip}
+              onPress={copyCode}
+              accessibilityLabel="Copy family invite code"
+            >
+              <View style={styles.familyChipLeft}>
+                <Text style={styles.familyChipLabel}>Family Code</Text>
+                <Text style={styles.familyChipCode}>{familyQ.data.inviteCode}</Text>
+                <Text style={styles.familyChipName}>{familyQ.data.name}</Text>
               </View>
-            </Card>
-          ))}
-        </View>
-
-        {/* Active Rewards */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Active Rewards 🎁</Text>
-            <TouchableOpacity onPress={() => router.push('/(parent)/rewards' as any)}>
-              <Text style={styles.seeAll}>Manage →</Text>
+              <View style={styles.familyChipIcon}>
+                <Ionicons
+                  name={copied ? 'checkmark' : 'copy-outline'}
+                  size={18}
+                  color={colors.primary}
+                />
+              </View>
             </TouchableOpacity>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {[
-              { emoji: '🎟️', name: 'Indoor Playground Ticket', coins: 200 },
-              { emoji: '🍦', name: 'Ice Cream', coins: 50 },
-              { emoji: '🎡', name: 'Playground', coins: 150 },
-              { emoji: '📱', name: 'Screen Time', coins: 80 },
-            ].map((r, i) => (
-              <Card key={i} variant="elevated" style={styles.rewardCard}>
-                <Text style={styles.rewardEmoji}>{r.emoji}</Text>
-                <Text style={styles.rewardName}>{r.name}</Text>
-                <Text style={styles.rewardCoins}>🪙 {r.coins}</Text>
-              </Card>
-            ))}
-          </ScrollView>
+          )}
         </View>
 
-        {/* Recent Activity */}
+        {/* Pending verifications */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          <Card variant="elevated" style={styles.activityCard}>
-            {[
-              { dot: colors.success, title: 'Alex completed "Make the bed"', time: '2 hours ago · Awaiting approval', badge: null },
-              { dot: colors.xp, title: 'Alex reached Level 3!', time: 'Yesterday', badge: '🏆' },
-              { dot: colors.secondary, title: 'Maya earned 30 coins', time: 'Yesterday', badge: '🪙' },
-            ].map((a, i) => (
-              <React.Fragment key={i}>
-                {i > 0 && <View style={styles.activityDivider} />}
-                <View style={styles.activityItem}>
-                  <View style={[styles.activityDot, { backgroundColor: a.dot }]} />
-                  <View style={styles.activityText}>
-                    <Text style={styles.activityTitle}>{a.title}</Text>
-                    <Text style={styles.activityTime}>{a.time}</Text>
-                  </View>
-                  {a.badge ? <Text style={styles.activityBadge}>{a.badge}</Text> : <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />}
-                </View>
-              </React.Fragment>
-            ))}
+          <Card variant="elevated" padding="md">
+            <View style={styles.pendingRow}>
+              <View style={styles.pendingIcon}>
+                <Ionicons name="hourglass-outline" size={22} color={colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pendingTitle}>Pending verifications</Text>
+                <Text style={styles.pendingSub}>
+                  {pendingCount === 0
+                    ? 'All caught up ✓'
+                    : `${pendingCount} mission${pendingCount === 1 ? '' : 's'} awaiting your review.`}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => router.push('/(parent)/approvals')}
+                style={styles.pendingBtn}
+              >
+                <Text style={styles.pendingBtnText}>Review</Text>
+                <Ionicons name="chevron-forward" size={16} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
           </Card>
         </View>
 
-        <View style={{ height: spacing.xxxl }} />
+        {/* Heroes */}
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle}>Your Heroes</Text>
+            <TouchableOpacity onPress={() => router.push('/(parent)/children')}>
+              <Text style={styles.sectionLink}>Manage →</Text>
+            </TouchableOpacity>
+          </View>
+
+          {children.length === 0 ? (
+            <Card variant="outlined" padding="lg">
+              <Text style={styles.emptyTitle}>Add your first Hero</Text>
+              <Text style={styles.emptySub}>
+                Create a child profile to assign missions and rewards.
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyCta}
+                onPress={() => router.push('/(parent)/children')}
+              >
+                <Text style={styles.emptyCtaText}>Add a Hero</Text>
+                <Ionicons name="arrow-forward" size={16} color={colors.surface} />
+              </TouchableOpacity>
+            </Card>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingRight: spacing.md }}
+            >
+              {children.map((c) => (
+                <View key={c.id} style={styles.heroCard}>
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarInitial}>
+                      {c.displayName.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <Text style={styles.heroName}>{c.displayName}</Text>
+                  {c.hero && (
+                    <Text style={styles.heroLevel}>
+                      Lv {c.hero.level} · {c.hero.coins} 🪙
+                    </Text>
+                  )}
+                  <TouchableOpacity
+                    style={styles.pinChip}
+                    onPress={() => router.push('/(parent)/children')}
+                    accessibilityLabel="Manage PIN"
+                  >
+                    <Text style={styles.pinLabel}>PIN</Text>
+                    <Text style={styles.pinValue}>••••</Text>
+                    <Ionicons name="key-outline" size={14} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+
+        {/* Trait radars (per child) */}
+        {children.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHead}>
+              <Text style={styles.sectionTitle}>Trait Growth</Text>
+              <Text style={styles.sectionSub}>Strength · Wisdom · Heart</Text>
+            </View>
+            {children.length === 1 ? (
+              <Card variant="elevated" padding="md">
+                <Text style={styles.radarChildName}>{children[0].displayName}</Text>
+                <View style={styles.radarSingleWrap}>
+                  <TraitRadar
+                    strength={traitByChild[children[0].id]?.strength ?? 0}
+                    wisdom={traitByChild[children[0].id]?.wisdom ?? 0}
+                    heart={traitByChild[children[0].id]?.heart ?? 0}
+                  />
+                </View>
+              </Card>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingRight: spacing.md }}
+              >
+                {children.map((c) => {
+                  const t = traitByChild[c.id];
+                  return (
+                    <View key={c.id} style={styles.radarCard}>
+                      <Text style={styles.radarChildName}>{c.displayName}</Text>
+                      <TraitRadar
+                        strength={t?.strength ?? 0}
+                        wisdom={t?.wisdom ?? 0}
+                        heart={t?.heart ?? 0}
+                        size={260}
+                      />
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        )}
+
+        {/* Quick actions */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Quick Actions</Text>
+          <View style={styles.quickRow}>
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={() => router.push('/(parent)/missions')}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: colors.primary }]}>
+                <Ionicons name="flag" size={22} color={colors.surface} />
+              </View>
+              <Text style={styles.quickLabel}>New Mission</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={() => router.push('/(parent)/rewards')}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: colors.accent }]}>
+                <Ionicons name="gift" size={22} color={colors.surface} />
+              </View>
+              <Text style={styles.quickLabel}>New Reward Goal</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.quickAction}
+              onPress={() => router.push('/(parent)/children')}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: colors.success }]}>
+                <Ionicons name="person-add" size={22} color={colors.surface} />
+              </View>
+              <Text style={styles.quickLabel}>Add Hero</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -180,78 +287,204 @@ export default function ParentDashboard() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  scrollView: { flex: 1 },
-  header: {
-    paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.xxl, overflow: 'hidden',
+  heroBlock: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
   },
-  decorCircle1: {
-    position: 'absolute', width: 160, height: 160, borderRadius: 80,
-    backgroundColor: 'rgba(255,255,255,0.06)', top: -30, right: -40,
+  greeting: { fontFamily: fonts.regular, fontSize: 16, color: colors.textSecondary },
+  displayName: {
+    fontFamily: fonts.extraBold,
+    fontSize: 30,
+    color: colors.primary,
+    marginTop: 2,
+    letterSpacing: -0.5,
   },
-  decorCircle2: {
-    position: 'absolute', width: 100, height: 100, borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.04)', bottom: -20, left: -20,
+  underline: {
+    width: 42,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
+    marginTop: 8,
   },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.xl },
-  greeting: { fontFamily: fonts.regular, fontSize: 14, color: 'rgba(255,255,255,0.8)' },
-  displayName: { fontFamily: fonts.extraBold, fontSize: 26, color: colors.white, marginTop: 2 },
-  avatarCircle: {
-    width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.25)',
-    alignItems: 'center', justifyContent: 'center',
+  familyChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.md,
+    ...shadows.sm,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.accent,
   },
-  avatarLetter: { fontFamily: fonts.bold, fontSize: 20, color: colors.white },
-  statPills: {
-    flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: borderRadius.xl, padding: spacing.md,
+  familyChipLeft: { flex: 1 },
+  familyChipLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: 11,
+    color: colors.textSecondary,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
-  statPill: { flex: 1, alignItems: 'center' },
-  statPillValue: { fontFamily: fonts.extraBold, fontSize: 24, color: colors.white },
-  statPillLabel: { fontFamily: fonts.regular, fontSize: 11, color: 'rgba(255,255,255,0.75)', textAlign: 'center', marginTop: 2 },
-  statPillDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.25)', marginVertical: 4 },
+  familyChipCode: {
+    fontFamily: fonts.extraBold,
+    fontSize: 22,
+    color: colors.primary,
+    letterSpacing: 2,
+    marginTop: 2,
+  },
+  familyChipName: {
+    fontFamily: fonts.regular,
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  familyChipIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  section: { paddingHorizontal: spacing.md, marginTop: spacing.md },
+  sectionHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: { fontFamily: fonts.bold, fontSize: 18, color: colors.primary },
+  sectionSub: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.textSecondary, letterSpacing: 1 },
+  sectionLink: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.accent },
 
-  section: { paddingHorizontal: spacing.lg, marginTop: spacing.xl },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
-  sectionTitle: { fontFamily: fonts.bold, fontSize: 18, color: colors.text, marginBottom: spacing.md },
-  seeAll: { fontFamily: fonts.semiBold, fontSize: 14, color: colors.primary },
-
-  quickActions: { flexDirection: 'row', justifyContent: 'space-between' },
-  quickAction: { alignItems: 'center', flex: 1 },
-  quickActionIcon: {
-    width: 56, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.xs, ...shadows.md,
+  radarCard: {
+    width: 280,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    marginRight: spacing.sm,
+    alignItems: 'center',
+    ...shadows.sm,
   },
-  quickActionLabel: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.textSecondary, textAlign: 'center' },
-
-  childCard: { marginBottom: spacing.sm },
-  childCardInner: { flexDirection: 'row', alignItems: 'center' },
-  childAvatar: {
-    width: 56, height: 56, borderRadius: 28, backgroundColor: colors.secondaryLight,
-    alignItems: 'center', justifyContent: 'center', marginRight: spacing.md,
+  radarSingleWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
   },
-  childAvatarEmoji: { fontSize: 30 },
-  childInfo: { flex: 1 },
-  childName: { fontFamily: fonts.bold, fontSize: 16, color: colors.text },
-  childLevel: { fontFamily: fonts.regular, fontSize: 13, color: colors.textSecondary, marginTop: 2 },
-  xpRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, gap: spacing.sm },
-  xpBarBg: { flex: 1, height: 6, backgroundColor: colors.backgroundSecondary, borderRadius: 3, overflow: 'hidden' },
-  xpBarFill: { height: '100%', backgroundColor: colors.xp, borderRadius: 3 },
-  xpLabel: { fontFamily: fonts.regular, fontSize: 11, color: colors.textTertiary },
-  childBadge: {
-    backgroundColor: colors.warningLight, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
-    borderRadius: borderRadius.full, marginLeft: spacing.sm,
+  radarChildName: {
+    fontFamily: fonts.extraBold,
+    fontSize: 14,
+    color: colors.primary,
+    marginBottom: spacing.xs,
+    textAlign: 'center',
   },
-  childBadgeText: { fontFamily: fonts.bold, fontSize: 14, color: colors.secondaryDark },
 
-  rewardCard: { alignItems: 'center', marginRight: spacing.sm, width: 100, paddingVertical: spacing.lg },
-  rewardEmoji: { fontSize: 28, marginBottom: 4 },
-  rewardName: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.text, textAlign: 'center' },
-  rewardCoins: { fontFamily: fonts.bold, fontSize: 11, color: colors.secondary, marginTop: 4 },
+  pendingRow: { flexDirection: 'row', alignItems: 'center' },
+  pendingIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.warningLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.sm,
+  },
+  pendingTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.primary },
+  pendingSub: { fontFamily: fonts.regular, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  pendingBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: borderRadius.md,
+  },
+  pendingBtnText: { fontFamily: fonts.bold, fontSize: 13, color: colors.primary },
 
-  activityCard: {},
-  activityItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm },
-  activityDot: { width: 10, height: 10, borderRadius: 5, marginRight: spacing.md },
-  activityText: { flex: 1 },
-  activityTitle: { fontFamily: fonts.semiBold, fontSize: 14, color: colors.text },
-  activityTime: { fontFamily: fonts.regular, fontSize: 12, color: colors.textTertiary, marginTop: 2 },
-  activityDivider: { height: 1, backgroundColor: colors.border, marginVertical: 4 },
-  activityBadge: { fontSize: 18, marginLeft: spacing.sm },
+  heroCard: {
+    width: 150,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    marginRight: spacing.sm,
+    alignItems: 'center',
+    ...shadows.sm,
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+  },
+  avatarInitial: { fontFamily: fonts.extraBold, fontSize: 22, color: colors.accent },
+  heroName: { fontFamily: fonts.bold, fontSize: 14, color: colors.primary, textAlign: 'center' },
+  heroLevel: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  pinChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.background,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: borderRadius.md,
+    marginTop: spacing.sm,
+  },
+  pinLabel: { fontFamily: fonts.semiBold, fontSize: 10, color: colors.textSecondary },
+  pinValue: { fontFamily: fonts.bold, fontSize: 14, color: colors.primary, letterSpacing: 2 },
+  pinHint: {
+    fontFamily: fonts.regular,
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  emptyTitle: { fontFamily: fonts.bold, fontSize: 16, color: colors.primary },
+  emptySub: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 4,
+    marginBottom: spacing.md,
+  },
+  emptyCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: borderRadius.lg,
+    gap: 6,
+  },
+  emptyCtaText: { fontFamily: fonts.bold, fontSize: 14, color: colors.surface },
+
+  quickRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  quickAction: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    alignItems: 'center',
+    ...shadows.sm,
+  },
+  quickIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+  },
+  quickLabel: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.primary, textAlign: 'center' },
 });

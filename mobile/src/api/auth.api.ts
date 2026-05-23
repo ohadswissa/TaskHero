@@ -15,6 +15,7 @@ interface RegisterRequest {
   password: string;
   displayName: string;
   familyName?: string;
+  timezone?: string;
 }
 
 interface TokenResponse {

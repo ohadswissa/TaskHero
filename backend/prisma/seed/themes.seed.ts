@@ -44,6 +44,15 @@ export async function seedThemes(prisma: PrismaClient) {
       color: '#2196F3',
       sortOrder: 6,
     },
+    // Demo "Hero's Path" theme — the 8 demo missions live here
+    {
+      slug: 'heros-path',
+      name: "Hero's Path",
+      description:
+        'Hand-picked missions that build Strength, Wisdom, and Heart — your creature grows with you.',
+      color: '#F5C16C',
+      sortOrder: 0,
+    },
   ];
 
   for (const theme of themes) {

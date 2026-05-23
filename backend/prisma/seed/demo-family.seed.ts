@@ -198,21 +198,8 @@ export async function seedDemoFamily(prisma: PrismaClient) {
     },
   });
 
-  // Unlock the first mini-game for Alex
-  const tapCollector = await prisma.miniGame.findUnique({
-    where: { slug: 'tap-collector' },
-  });
-
-  if (tapCollector) {
-    await prisma.miniGameUnlock.create({
-      data: {
-        childProfileId: child1User.childProfile!.id,
-        miniGameId: tapCollector.id,
-        timesPlayed: 3,
-        highScore: 42,
-      },
-    });
-  }
+  // Mini-game unlocks intentionally skipped — demo has no mini-games.
+  // See plans/demo-flow.md §2 ("Explicitly OUT of demo scope").
 
   // Give Alex an achievement
   const firstStepAchievement = await prisma.achievement.findUnique({

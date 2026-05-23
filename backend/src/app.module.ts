@@ -22,6 +22,7 @@ import { MissionsModule } from './modules/missions/missions.module';
 import { AssignmentsModule } from './modules/assignments/assignments.module';
 import { SubmissionsModule } from './modules/submissions/submissions.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
+import { CreaturesModule } from './modules/creatures/creatures.module';
 
 // Progression Modules
 import { HeroesModule } from './modules/heroes/heroes.module';
@@ -92,6 +93,7 @@ import { HealthModule } from './modules/health/health.module';
     AssignmentsModule,
     SubmissionsModule,
     ApprovalsModule,
+    CreaturesModule,
 
     // Progression
     HeroesModule,

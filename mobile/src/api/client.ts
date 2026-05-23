@@ -55,13 +55,41 @@ apiClient.interceptors.response.use(
     }
 
     // Extract error message from response
+    const rawMessage = (error.response?.data as { message?: string | string[] })?.message;
     const message =
-      (error.response?.data as { message?: string })?.message ||
+      (Array.isArray(rawMessage) ? rawMessage[0] : rawMessage) ||
       error.message ||
       'An error occurred';
 
-    return Promise.reject(new Error(message));
+    // Preserve status on the rethrown Error so callers can detect 404/etc.
+    const wrapped = new Error(message) as Error & { status?: number };
+    if (error.response?.status) wrapped.status = error.response.status;
+    return Promise.reject(wrapped);
   }
 );
+
+/**
+ * Surface a backend error message cleanly. Handles both axios errors and
+ * the rethrown Error instances created by the response interceptor above.
+ *
+ * Backend envelope shape: `{ statusCode, message, error }` where `message`
+ * may be a string or a string[] (class-validator). We coerce to a single
+ * human-readable string.
+ */
+export function extractApiError(err: unknown, fallback = 'Something went wrong'): string {
+  if (!err) return fallback;
+  // Already-normalised Error (from the response interceptor)
+  if (err instanceof Error && err.message) return err.message;
+  const anyErr = err as {
+    response?: { data?: { message?: string | string[]; error?: string } };
+    message?: string;
+  };
+  const msg = anyErr.response?.data?.message;
+  if (Array.isArray(msg) && msg.length > 0) return msg[0];
+  if (typeof msg === 'string' && msg.length > 0) return msg;
+  if (anyErr.response?.data?.error) return anyErr.response.data.error;
+  if (anyErr.message) return anyErr.message;
+  return fallback;
+}
 
 export default apiClient;

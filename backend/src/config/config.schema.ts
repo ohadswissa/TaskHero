@@ -23,12 +23,13 @@ export const configValidationSchema = Joi.object({
   // Bcrypt
   BCRYPT_SALT_ROUNDS: Joi.number().default(12),
 
-  // Storage
+  // Storage (MinIO / S3-compatible)
   STORAGE_TYPE: Joi.string().valid('local', 's3').default('local'),
-  S3_ENDPOINT: Joi.string().optional(),
-  S3_ACCESS_KEY: Joi.string().optional(),
-  S3_SECRET_KEY: Joi.string().optional(),
-  S3_BUCKET: Joi.string().optional(),
+  S3_ENDPOINT: Joi.string().default('http://localhost:9000'),
+  S3_ACCESS_KEY: Joi.string().default('minioadmin'),
+  S3_SECRET_KEY: Joi.string().default('minioadmin'),
+  S3_BUCKET: Joi.string().optional(), // legacy generic bucket (kept for back-compat)
+  S3_BUCKET_SUBMISSIONS: Joi.string().default('submissions'),
   S3_REGION: Joi.string().default('us-east-1'),
 
   // CORS

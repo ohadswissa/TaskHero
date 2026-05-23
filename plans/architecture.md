@@ -1,7 +1,9 @@
 # TaskHero - Architecture & Implementation Plan
 
-> **Document Status**: FINALIZED - Awaiting stakeholder approval
-> **Last Updated**: 2026-03-21
+> **Document Status**: FINALIZED — extended 2026-05-23 by [`plans/demo-flow.md`](demo-flow.md)
+> **Last Updated**: 2026-05-23
+>
+> ⚠️ **Demo Scope Notice**: For the upcoming demo (creature system, Hero's Wisdom layer, trait-based progression, parent verification co-op loop, reward goals), this document is **extended** by [`plans/demo-flow.md`](demo-flow.md). That doc is the source of truth for: the demo user flow, the `Creature` / `CareItem` data model, `TraitCategory` enum, additive fields on `Mission` / `MissionApproval`, the demo API surface, screen list, seed content, and the M1–M7 milestone plan. The platform-level decisions below remain authoritative for infrastructure, auth, and non-demo subsystems.
 
 ## Key Decisions Summary
 
@@ -1548,3 +1550,47 @@ See separate section for clarifying questions to be asked.
 2. Answer clarifying questions
 3. Approve or modify the plan
 4. Begin Stage 1 implementation
+
+---
+
+## 11. Demo Scope Addendum (2026-05-23)
+
+Stage 1 is complete (project scaffolding, schema, auth, mobile shell). The next body of work is the **demo vertical slice** described in detail in [`plans/demo-flow.md`](demo-flow.md). Summary of deltas from this document:
+
+### 11.1 New domain concepts not in original platform schema
+
+- **`Creature`** (1:1 with `ChildProfile`) — species, name, evolution stage, happiness, three trait counters (strength/wisdom/heart). Sits alongside the existing `Hero` model; `Hero` keeps XP/coins/streak, `Creature` carries the narrative layer.
+- **`CareItem`** — earned on mission verification, consumed by child to feed/play/decorate; type derived from mission's trait category.
+- **`TraitCategory`** enum (STRENGTH / WISDOM / HEART) — added as a new field on `MissionTemplate` and `Mission` *alongside* the existing `MissionCategory` (not a replacement).
+- **`CreatureSpecies`** enum (FOREST_PUP / SKY_SPRITE / STONE_CUB).
+- **`EvolutionStage`** enum (EGG / BABY / ADOLESCENT / ADULT).
+- **Hero's Wisdom** — new optional `heroWisdom` text field on `MissionTemplate` and `Mission` (parchment card shown on mission detail).
+- **Hero Mail** — new optional `parentMessage` text field on `MissionApproval`; surfaced to child as a notification overlay before the reward animation.
+
+### 11.2 What stays the same
+
+- `Reward` model is reused as-is for reward goals (uses `COIN_THRESHOLD` condition type).
+- `MissionAssignment` / `MissionSubmission` / `MissionApproval` workflow is reused; we only add `parentMessage` to approval.
+- Auth, families, child PIN login, refresh tokens — unchanged.
+- All migrations remain additive — no destructive changes to existing tables.
+
+### 11.3 Demo milestones (full detail in [`plans/demo-flow.md`](demo-flow.md))
+
+| Milestone | Goal |
+|---|---|
+| **M1** | Schema extension + migration + seed (3 species, 8 missions w/ Hero's Wisdom, 5 reward templates) |
+| **M2** | Backend API: creatures, missions, assignments, submissions, approvals (with transactional verification side-effects), rewards progress, trait summary, notifications |
+| **M3** | Parent mobile flow: register → create child → create mission → create reward goal |
+| **M4** | Child mobile flow: origin story → species pick → name → hatch → Creature Hub |
+| **M5** | Core child mission loop: mission list → detail w/ Hero's Wisdom → complete → feed creature |
+| **M6** | Parent verification co-op loop: pending list → verify w/ Hero Mail message → child receives Hero Mail + reward animation |
+| **M7** | Polish: evolution animation, trait radar chart, reward redeem celebration, visual styling pass |
+
+### 11.4 Open questions (full list in [`plans/demo-flow.md`](demo-flow.md) §9)
+
+Highest-priority decisions still pending stakeholder input:
+
+1. Evolution thresholds (spec 20/60/120 vs. demo-friendly 1/20/60)
+2. Push notifications real (APNs/FCM) vs. in-app polling for the demo
+3. Creature art: ship with placeholder PNGs and swap later, or block on final art
+4. Reward Goals: single active vs. multiple concurrent for the demo

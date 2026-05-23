@@ -1,292 +1,866 @@
-import React, { useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated } from 'react-native';
-import { Gradient as LinearGradient } from '@/components/common/Gradient';
+/**
+ * Creature Hub (Home) — M5a.
+ *
+ * Polished hub view:
+ *  - top bar with hero name + logout
+ *  - centerpiece SpeciesBadge with gentle bob (translateY loop 4px) and a
+ *    playful jiggle on tap
+ *  - happiness bar with client-side -1/10s tick (visual only — server is
+ *    authoritative on read)
+ *  - three trait icons with counts (tap → tooltip with trait name + count)
+ *  - active reward goal progress band (single active reward via
+ *    `rewardsApi.getMyActiveReward`); shimmer + redeem button when unlocked
+ *  - care item shelf (static cards — tap-to-feed lands in M5b)
+ *  - pull-to-refresh refetches creature + reward
+ */
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { colors, spacing, gradients, borderRadius, shadows, fonts } from '@/theme';
-import { Card } from '@/components/common';
+import { Ionicons } from '@expo/vector-icons';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  creaturesApi,
+  extractApiError,
+  queryKeys,
+  rewardsApi,
+} from '@/api';
+import type { CareItem, Creature, EvolutionStage, TraitCategory } from '@/api';
 import { useAuthStore } from '@/stores/authStore';
+import { SpeciesBadge } from '@/components/creature/SpeciesBadge';
+import { EvolutionOverlay } from '@/components/creature/EvolutionOverlay';
+import { RewardCelebration } from '@/components/rewards/RewardCelebration';
+import { SPECIES_DEFAULTS } from '@/constants/species';
+import {
+  borderRadius,
+  colors,
+  fonts,
+  shadows,
+  spacing,
+  traitColor,
+  traitLabel,
+} from '@/theme';
 
-export default function ChildDashboard() {
-  const { logout, user } = useAuthStore();
+const TRAITS: TraitCategory[] = ['STRENGTH', 'WISDOM', 'HEART'];
+
+export default function ChildHub() {
+  const { user, logout } = useAuthStore();
   const heroName = user?.displayName || 'Hero';
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const queryClient = useQueryClient();
 
+  const creatureQuery = useQuery({
+    queryKey: queryKeys.creature.me,
+    queryFn: creaturesApi.getMyCreature,
+    staleTime: 1000 * 30,
+  });
+
+  const rewardQuery = useQuery({
+    queryKey: queryKeys.rewards.mineActive,
+    queryFn: rewardsApi.getMyActiveReward,
+    staleTime: 1000 * 30,
+  });
+
+  // Client-side happiness tick: -1/10s, clamped at 0, resets when server
+  // happiness changes (i.e. after refetch).
+  const serverHappiness = creatureQuery.data?.happiness ?? 0;
+  const [happinessDisplay, setHappinessDisplay] = useState<number>(serverHappiness);
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.05, duration: 1500, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
-      ])
-    ).start();
+    setHappinessDisplay(serverHappiness);
+  }, [serverHappiness]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setHappinessDisplay((h) => Math.max(0, h - 1));
+    }, 10_000);
+    return () => clearInterval(id);
   }, []);
 
-  const handleLogout = async () => {
+  // Sprite bob animation
+  const bob = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(bob, { toValue: -4, duration: 1200, useNativeDriver: true }),
+        Animated.timing(bob, { toValue: 0, duration: 1200, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [bob]);
+  const jiggle = useRef(new Animated.Value(0)).current;
+  function handleSpriteTap() {
+    jiggle.setValue(0);
+    Animated.sequence([
+      Animated.timing(jiggle, { toValue: 1, duration: 80, useNativeDriver: true }),
+      Animated.timing(jiggle, { toValue: -1, duration: 80, useNativeDriver: true }),
+      Animated.timing(jiggle, { toValue: 0, duration: 80, useNativeDriver: true }),
+    ]).start();
+  }
+  const jiggleRotate = jiggle.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: ['-4deg', '0deg', '4deg'],
+  });
+
+  // Particles (one slow blob + one faster) — soft cream backdrop accent
+  const particle1 = useRef(new Animated.Value(0)).current;
+  const particle2 = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const a = Animated.loop(
+      Animated.sequence([
+        Animated.timing(particle1, { toValue: 1, duration: 6000, useNativeDriver: true }),
+        Animated.timing(particle1, { toValue: 0, duration: 6000, useNativeDriver: true }),
+      ]),
+    );
+    const b = Animated.loop(
+      Animated.sequence([
+        Animated.timing(particle2, { toValue: 1, duration: 4500, useNativeDriver: true }),
+        Animated.timing(particle2, { toValue: 0, duration: 4500, useNativeDriver: true }),
+      ]),
+    );
+    a.start();
+    b.start();
+    return () => {
+      a.stop();
+      b.stop();
+    };
+  }, [particle1, particle2]);
+
+  // Tooltip for trait icons
+  const [activeTrait, setActiveTrait] = useState<TraitCategory | null>(null);
+  // Pulse animation for the trait icon that just grew (driven by feed mutation)
+  const traitPulseRef = useRef<Record<TraitCategory, Animated.Value>>({
+    STRENGTH: new Animated.Value(1),
+    WISDOM: new Animated.Value(1),
+    HEART: new Animated.Value(1),
+  });
+  function pulseTrait(t: TraitCategory) {
+    const v = traitPulseRef.current[t];
+    v.setValue(1);
+    Animated.sequence([
+      Animated.timing(v, { toValue: 1.3, duration: 175, useNativeDriver: true }),
+      Animated.timing(v, { toValue: 1, duration: 175, useNativeDriver: true }),
+    ]).start();
+  }
+
+  // Toast for feed errors
+  const [feedError, setFeedError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!feedError) return;
+    const id = setTimeout(() => setFeedError(null), 2500);
+    return () => clearTimeout(id);
+  }, [feedError]);
+
+  // Feed mutation — optimistic happiness bump + remove from shelf, rollback on error,
+  // reconcile on success.
+  const HAPPINESS_PER_CARE_ITEM = 10;
+  const feedM = useMutation({
+    mutationFn: (careItemId: string) => creaturesApi.feedCreature(careItemId),
+    onMutate: async (careItemId: string): Promise<{ prev: Creature | null | undefined }> => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.creature.me });
+      const prev = queryClient.getQueryData<Creature | null>(queryKeys.creature.me);
+      if (prev) {
+        const target = prev.pendingCareItems?.find((c) => c.id === careItemId);
+        const traitBump: TraitCategory | null = target?.traitCategory ?? null;
+        const next: Creature = {
+          ...prev,
+          happiness: Math.min(100, prev.happiness + HAPPINESS_PER_CARE_ITEM),
+          strengthPoints:
+            prev.strengthPoints + (traitBump === 'STRENGTH' ? 1 : 0),
+          wisdomPoints: prev.wisdomPoints + (traitBump === 'WISDOM' ? 1 : 0),
+          heartPoints: prev.heartPoints + (traitBump === 'HEART' ? 1 : 0),
+          pendingCareItems: (prev.pendingCareItems ?? []).filter(
+            (c) => c.id !== careItemId,
+          ),
+        };
+        queryClient.setQueryData(queryKeys.creature.me, next);
+        // Drive display happiness immediately so the bar tweens
+        setHappinessDisplay(next.happiness);
+        if (traitBump) pulseTrait(traitBump);
+      }
+      return { prev };
+    },
+    onError: (err, _careItemId, ctx) => {
+      if (ctx?.prev !== undefined) {
+        queryClient.setQueryData(queryKeys.creature.me, ctx.prev);
+        setHappinessDisplay(ctx.prev?.happiness ?? 0);
+      }
+      setFeedError(extractApiError(err, "Couldn't feed right now — try again."));
+    },
+    onSuccess: () => {
+      // Reconcile any drift (trait counters, exact happiness post-tick)
+      queryClient.invalidateQueries({ queryKey: queryKeys.creature.me });
+    },
+  });
+
+  // ------------------------------------------------------------------
+  // Evolution: detect stage change between renders & play overlay.
+  // ------------------------------------------------------------------
+  const prevStageRef = useRef<EvolutionStage | null>(null);
+  const [evolutionEvent, setEvolutionEvent] = useState<{
+    from: EvolutionStage;
+    to: EvolutionStage;
+  } | null>(null);
+  const currentStage = creatureQuery.data?.stage ?? null;
+  useEffect(() => {
+    if (!currentStage) return;
+    const prev = prevStageRef.current;
+    if (prev && prev !== currentStage) {
+      setEvolutionEvent({ from: prev, to: currentStage });
+    }
+    prevStageRef.current = currentStage;
+  }, [currentStage]);
+
+  // ------------------------------------------------------------------
+  // Reward: detect unlock false→true flip; redeem → celebration.
+  // ------------------------------------------------------------------
+  const rewardUnlocked = rewardQuery.data?.unlocked ?? false;
+  const prevUnlockedRef = useRef<boolean>(false);
+  const [showUnlockToast, setShowUnlockToast] = useState(false);
+  const unlockPulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const prev = prevUnlockedRef.current;
+    if (!prev && rewardUnlocked) {
+      // Just unlocked — fire pulse + toast
+      setShowUnlockToast(true);
+      Animated.sequence([
+        Animated.timing(unlockPulse, {
+          toValue: 1,
+          duration: 250,
+          useNativeDriver: false, // we drive backgroundColor interp
+        }),
+        Animated.delay(900),
+        Animated.timing(unlockPulse, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: false,
+        }),
+      ]).start();
+      const id = setTimeout(() => setShowUnlockToast(false), 1500);
+      return () => clearTimeout(id);
+    }
+    prevUnlockedRef.current = rewardUnlocked;
+    return undefined;
+  }, [rewardUnlocked, unlockPulse]);
+  useEffect(() => {
+    // Keep ref in sync after each render
+    prevUnlockedRef.current = rewardUnlocked;
+  }, [rewardUnlocked]);
+
+  // Reward redeem
+  const [celebrateName, setCelebrateName] = useState<string | null>(null);
+  const redeem = useMutation({
+    mutationFn: (id: string) => rewardsApi.redeemReward(id),
+    onMutate: () => {
+      // Trigger celebration optimistically — the server call is non-failing
+      // for our demo (the active reward is already unlocked at this point).
+      const name = rewardQuery.data?.name;
+      if (name) setCelebrateName(name);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.rewards.mineActive });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rewards.family });
+      queryClient.invalidateQueries({ queryKey: queryKeys.creature.me });
+    },
+  });
+
+  function refreshAll() {
+    creatureQuery.refetch();
+    rewardQuery.refetch();
+  }
+
+  async function handleLogout() {
     await logout();
-    router.replace('/(auth)/login');
-  };
+    router.replace('/(auth)/child-login' as never);
+  }
+
+  if (creatureQuery.isPending) {
+    return (
+      <View style={styles.fullLoading}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
+
+  const creature = creatureQuery.data;
+  if (!creature) {
+    return (
+      <View style={styles.fullLoading}>
+        <Text style={{ color: colors.textSecondary, fontFamily: fonts.regular }}>
+          Preparing your bond…
+        </Text>
+      </View>
+    );
+  }
+
+  const meta = SPECIES_DEFAULTS[creature.species];
+  const happinessPct = Math.max(0, Math.min(100, happinessDisplay));
+  const care = (creature.pendingCareItems ?? []) as CareItem[];
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.root} edges={['top']}>
+      {/* Particle accents */}
+      <Animated.View
+        style={[
+          styles.particle,
+          styles.particleA,
+          {
+            opacity: particle1.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.55] }),
+            transform: [
+              { translateY: particle1.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) },
+            ],
+          },
+        ]}
+        pointerEvents="none"
+      />
+      <Animated.View
+        style={[
+          styles.particle,
+          styles.particleB,
+          {
+            opacity: particle2.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.45] }),
+            transform: [
+              { translateY: particle2.interpolate({ inputRange: [0, 1], outputRange: [0, 8] }) },
+            ],
+          },
+        ]}
+        pointerEvents="none"
+      />
 
-        {/* Hero Card */}
-        <LinearGradient colors={['#F59E0B', '#EF4444', '#EC4899']} style={styles.heroCard} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-          {/* Decorative elements */}
-          <View style={styles.decorCircle1} />
-          <View style={styles.decorCircle2} />
-
-          <TouchableOpacity style={styles.signOutBtn} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={20} color="rgba(255,255,255,0.8)" />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={creatureQuery.isRefetching || rewardQuery.isRefetching}
+            onRefresh={refreshAll}
+          />
+        }
+      >
+        {/* Top bar */}
+        <View style={styles.topBar}>
+          <View>
+            <Text style={styles.topEyebrow}>HERO</Text>
+            <Text style={styles.topName}>{heroName}</Text>
+          </View>
+          <TouchableOpacity onPress={handleLogout} style={styles.iconBtn} hitSlop={10}>
+            <Ionicons name="log-out-outline" size={22} color={colors.textSecondary} />
           </TouchableOpacity>
+        </View>
 
-          <View style={styles.heroTop}>
-            <Animated.View style={[styles.avatarRing, { transform: [{ scale: pulseAnim }] }]}>
-              <TouchableOpacity style={styles.avatarInner} onPress={() => router.push('/(child)/avatar' as any)}>
-                <Text style={styles.avatarEmoji}>🦸</Text>
+        {/* Sprite + creature name */}
+        <TouchableOpacity activeOpacity={0.9} onPress={handleSpriteTap} style={styles.spriteWrap}>
+          <Animated.View
+            style={{ transform: [{ translateY: bob }, { rotate: jiggleRotate }] }}
+          >
+            <SpeciesBadge species={creature.species} stage={creature.stage} size={180} />
+          </Animated.View>
+        </TouchableOpacity>
+        <Text style={styles.creatureName}>{creature.name}</Text>
+        <Text style={styles.creatureSub}>
+          {meta.displayName} · {creature.stage}
+        </Text>
+
+        {/* Happiness bar */}
+        <View style={styles.happinessBlock}>
+          <View style={styles.happinessRow}>
+            <Text style={styles.happinessLabel}>Happiness</Text>
+            <Text style={styles.happinessValue}>{happinessPct}/100</Text>
+          </View>
+          <View style={styles.happinessBg}>
+            <View
+              style={[
+                styles.happinessFill,
+                { width: `${happinessPct}%`, backgroundColor: colors.accent },
+              ]}
+            />
+          </View>
+        </View>
+
+        {/* Trait icons row */}
+        <View style={styles.traitsRow}>
+          {TRAITS.map((t) => {
+            const count =
+              t === 'STRENGTH'
+                ? creature.strengthPoints
+                : t === 'WISDOM'
+                  ? creature.wisdomPoints
+                  : creature.heartPoints;
+            const tColor = traitColor(t);
+            const lit = count > 0;
+            const pulse = traitPulseRef.current[t];
+            return (
+              <TouchableOpacity
+                key={t}
+                style={styles.traitItem}
+                onPress={() => setActiveTrait(activeTrait === t ? null : t)}
+              >
+                <Animated.View
+                  style={[
+                    styles.traitCircle,
+                    {
+                      backgroundColor: lit ? tColor : colors.borderLight,
+                      borderColor: lit ? tColor : colors.border,
+                      transform: [{ scale: pulse }],
+                    },
+                  ]}
+                >
+                  <Text style={[styles.traitCount, { color: lit ? colors.white : colors.textSecondary }]}>
+                    {count}
+                  </Text>
+                </Animated.View>
+                <Text style={styles.traitName}>{traitLabel(t)}</Text>
+                {activeTrait === t && (
+                  <View style={styles.tooltip}>
+                    <Text style={styles.tooltipTxt}>
+                      {traitLabel(t)} · Lessons learned: {count}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
-            </Animated.View>
-            <View style={styles.heroInfo}>
-              <Text style={styles.heroLabel}>⚡ HERO</Text>
-              <Text style={styles.heroName}>{heroName}</Text>
-            </View>
-            <View style={styles.levelBadge}>
-              <Text style={styles.levelNum}>3</Text>
-              <Text style={styles.levelText}>LVL</Text>
-            </View>
-          </View>
-
-          {/* XP Bar */}
-          <View style={styles.xpSection}>
-            <View style={styles.xpBarBg}>
-              <LinearGradient
-                colors={['#FBBF24', '#FFF']}
-                style={[styles.xpBarFill, { width: '60%' }]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              />
-            </View>
-            <Text style={styles.xpText}>150 / 250 XP to Level 4 🚀</Text>
-          </View>
-
-          {/* Coins & Streak */}
-          <View style={styles.chips}>
-            <View style={styles.chip}>
-              <Text style={styles.chipEmoji}>🪙</Text>
-              <Text style={styles.chipValue}>75</Text>
-              <Text style={styles.chipLabel}>Coins</Text>
-            </View>
-            <View style={styles.chipDivider} />
-            <View style={styles.chip}>
-              <Text style={styles.chipEmoji}>🔥</Text>
-              <Text style={styles.chipValue}>5</Text>
-              <Text style={styles.chipLabel}>Streak</Text>
-            </View>
-            <View style={styles.chipDivider} />
-            <View style={styles.chip}>
-              <Text style={styles.chipEmoji}>🏆</Text>
-              <Text style={styles.chipValue}>3</Text>
-              <Text style={styles.chipLabel}>Badges</Text>
-            </View>
-          </View>
-        </LinearGradient>
-
-        {/* Quick Actions */}
-        <Animated.View style={[styles.section, { opacity: fadeAnim }]}>
-          <View style={styles.quickActions}>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(child)/missions')}>
-              <LinearGradient colors={['#F59E0B', '#EF4444']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={styles.quickActionEmoji}>🎯</Text>
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>Missions</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(child)/creature' as any)}>
-              <LinearGradient colors={['#EC4899', '#8B5CF6']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={styles.quickActionEmoji}>🐾</Text>
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>Creature</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(child)/avatar' as any)}>
-              <LinearGradient colors={['#8B5CF6', '#6366F1']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={styles.quickActionEmoji}>✨</Text>
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>Avatar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.quickAction} onPress={() => router.push('/(child)/rewards')}>
-              <LinearGradient colors={['#10B981', '#059669']} style={styles.quickActionIcon} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <Text style={styles.quickActionEmoji}>🎁</Text>
-              </LinearGradient>
-              <Text style={styles.quickActionLabel}>Rewards</Text>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-
-        {/* Today's Missions */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Today's Missions 🎯</Text>
-            <TouchableOpacity onPress={() => router.push('/(child)/missions')}>
-              <Text style={styles.seeAll}>See all →</Text>
-            </TouchableOpacity>
-          </View>
-
-          {[
-            { emoji: '🛏️', title: 'Make the bed', xp: 20, coins: 10, bg: '#EDE9FE', priority: '🔴', time: '5m' },
-            { emoji: '📚', title: 'Read for 20 minutes', xp: 30, coins: 15, bg: '#FEF3C7', priority: '🟡', time: '20m' },
-            { emoji: '🧹', title: 'Clean your room', xp: 25, coins: 12, bg: '#D1FAE5', priority: '🟢', time: '15m' },
-          ].map((m, i) => (
-            <TouchableOpacity key={i} onPress={() => router.push('/(child)/missions')}>
-              <Card variant="elevated" style={styles.missionCard}>
-                <View style={styles.missionRow}>
-                  <View style={[styles.missionIconBox, { backgroundColor: m.bg }]}>
-                    <Text style={styles.missionIcon}>{m.emoji}</Text>
-                  </View>
-                  <View style={styles.missionInfo}>
-                    <Text style={styles.missionTitle}>{m.title}</Text>
-                    <Text style={styles.missionMeta}>+{m.xp} XP · +{m.coins} 🪙 · ⏱️ {m.time}</Text>
-                  </View>
-                  <Text style={{ fontSize: 16 }}>{m.priority}</Text>
-                </View>
-              </Card>
-            </TouchableOpacity>
-          ))}
+            );
+          })}
         </View>
 
-        {/* Rewards Preview */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Rewards to Earn 🎁</Text>
-            <TouchableOpacity onPress={() => router.push('/(child)/rewards')}>
-              <Text style={styles.seeAll}>See all →</Text>
-            </TouchableOpacity>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {[
-              { emoji: '🍦', name: 'Ice Cream', coins: 50, progress: 1 },
-              { emoji: '📱', name: 'Screen Time', coins: 80, progress: 0.94 },
-              { emoji: '🎡', name: 'Playground', coins: 150, progress: 0.5 },
-              { emoji: '🎟️', name: 'Indoor Playground', coins: 200, progress: 0.38 },
-            ].map((r, i) => (
-              <Card key={i} variant="elevated" style={styles.rewardPreviewCard}>
-                <Text style={styles.rewardEmoji}>{r.emoji}</Text>
-                <Text style={styles.rewardName}>{r.name}</Text>
-                <View style={styles.rewardProgressBg}>
-                  <View style={[styles.rewardProgressFill, { width: `${r.progress * 100}%` }]} />
-                </View>
-                <Text style={styles.rewardCoins}>🪙 {r.coins}</Text>
-              </Card>
-            ))}
-          </ScrollView>
+        {/* Active reward goal */}
+        <RewardGoal
+          reward={rewardQuery.data}
+          isPending={rewardQuery.isPending}
+          onRedeem={(id) => redeem.mutate(id)}
+          redeeming={redeem.isPending}
+          error={extractApiError(redeem.error, '')}
+        />
+
+        {/* Care item shelf */}
+        <View style={styles.shelfBlock}>
+          <Text style={styles.sectionLabel}>Care items</Text>
+          {care.length === 0 ? (
+            <View style={styles.shelfEmpty}>
+              <Text style={styles.shelfEmptyTxt}>
+                No treats yet — finish a mission to earn one!
+              </Text>
+            </View>
+          ) : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.shelfScroll}
+            >
+              {care.map((c) => (
+                <CareCard
+                  key={c.id}
+                  item={c}
+                  disabled={feedM.isPending}
+                  onFeed={() => feedM.mutate(c.id)}
+                />
+              ))}
+            </ScrollView>
+          )}
         </View>
 
-        {/* Achievements */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Badges 🏅</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {[
-              { emoji: '🌟', name: 'First Mission', desc: 'Completed 1st task' },
-              { emoji: '🔥', name: 'On Fire', desc: '5-day streak' },
-              { emoji: '📚', name: 'Scholar', desc: 'Read 3 books' },
-            ].map((b, i) => (
-              <Card key={i} variant="elevated" style={styles.badgeCard}>
-                <Text style={styles.badgeEmoji}>{b.emoji}</Text>
-                <Text style={styles.badgeName}>{b.name}</Text>
-                <Text style={styles.badgeDesc}>{b.desc}</Text>
-              </Card>
-            ))}
-          </ScrollView>
-        </View>
-
-        <View style={{ height: spacing.xxxl }} />
+        <View style={{ height: spacing.xl }} />
       </ScrollView>
+
+      {/* Feed error toast */}
+      {feedError && (
+        <View style={styles.feedToast} pointerEvents="none">
+          <Text style={styles.feedToastTxt}>{feedError}</Text>
+        </View>
+      )}
+
+      {/* Reward unlock toast (false→true flip) */}
+      {showUnlockToast && (
+        <View style={styles.unlockToast} pointerEvents="none">
+          <Text style={styles.unlockToastTxt}>🎉 Reward unlocked!</Text>
+        </View>
+      )}
+
+      {/* Reward redeem celebration */}
+      <RewardCelebration
+        visible={!!celebrateName}
+        rewardName={celebrateName ?? ''}
+        onDismiss={() => setCelebrateName(null)}
+      />
+
+      {/* Evolution overlay (plays once on stage change) */}
+      {evolutionEvent && creature && (
+        <EvolutionOverlay
+          species={creature.species}
+          fromStage={evolutionEvent.from}
+          toStage={evolutionEvent.to}
+          creatureName={creature.name}
+          onComplete={() => setEvolutionEvent(null)}
+        />
+      )}
     </SafeAreaView>
   );
 }
 
+function RewardGoal({
+  reward,
+  isPending,
+  onRedeem,
+  redeeming,
+  error,
+}: {
+  reward: ReturnType<typeof Object> & { id: string; name: string; progress: number; target: number; unlocked: boolean } | null | undefined;
+  isPending: boolean;
+  onRedeem: (id: string) => void;
+  redeeming: boolean;
+  error?: string;
+}) {
+  if (isPending) {
+    return (
+      <View style={styles.rewardBand}>
+        <ActivityIndicator size="small" color={colors.accent} />
+      </View>
+    );
+  }
+  if (!reward) {
+    return null;
+  }
+  const pct = Math.min(100, Math.round((reward.progress / Math.max(1, reward.target)) * 100));
+  return (
+    <View style={styles.rewardBand}>
+      <View style={styles.rewardHeader}>
+        <Ionicons name="gift" size={20} color={colors.accent} />
+        <Text style={styles.rewardName} numberOfLines={1}>
+          {reward.name}
+        </Text>
+        <Text style={styles.rewardProgress}>
+          {reward.progress}/{reward.target}
+        </Text>
+      </View>
+      <View style={styles.rewardBarBg}>
+        <View style={[styles.rewardBarFill, { width: `${pct}%` }]} />
+      </View>
+      {reward.unlocked && (
+        <TouchableOpacity
+          style={styles.rewardRedeem}
+          onPress={() => onRedeem(reward.id)}
+          disabled={redeeming}
+        >
+          {redeeming ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <>
+              <Ionicons name="sparkles" size={16} color={colors.primary} />
+              <Text style={styles.rewardRedeemTxt}>Tap to redeem</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
+      {!!error && <Text style={styles.rewardError}>{error}</Text>}
+    </View>
+  );
+}
+
+function CareCard({
+  item,
+  onFeed,
+  disabled,
+}: {
+  item: CareItem;
+  onFeed: () => void;
+  disabled: boolean;
+}) {
+  const tColor = traitColor(item.traitCategory);
+  // Bounce + fade-out animation on tap. We keep a local "spent" flag so
+  // the card visually leaves the shelf the moment the user taps, even
+  // before the optimistic cache update has propagated (feels snappier).
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(1)).current;
+  const [spent, setSpent] = useState(false);
+
+  function handlePress() {
+    if (disabled || spent) return;
+    setSpent(true);
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 1.15, duration: 160, useNativeDriver: true }),
+      Animated.parallel([
+        Animated.timing(scale, { toValue: 0, duration: 240, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0, duration: 240, useNativeDriver: true }),
+      ]),
+    ]).start(() => {
+      onFeed();
+    });
+  }
+
+  return (
+    <Animated.View
+      style={{
+        transform: [{ scale }],
+        opacity,
+      }}
+    >
+      <TouchableOpacity
+        activeOpacity={0.85}
+        onPress={handlePress}
+        disabled={disabled || spent}
+        style={[styles.careCard, { borderColor: tColor + '55' }]}
+      >
+        <View style={[styles.careIcon, { backgroundColor: tColor + '20' }]}>
+          <Ionicons name="nutrition-outline" size={22} color={tColor} />
+        </View>
+        <Text style={styles.careName} numberOfLines={1}>
+          {item.itemSlug.replace(/_/g, ' ')}
+        </Text>
+        <Text style={[styles.careTrait, { color: tColor }]}>
+          +{item.happinessDelta} happy
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  scrollView: { flex: 1 },
-  heroCard: {
-    margin: spacing.lg, borderRadius: borderRadius.xxl, padding: spacing.lg,
-    ...shadows.lg, overflow: 'hidden',
+  root: { flex: 1, backgroundColor: colors.background },
+  fullLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
   },
-  decorCircle1: {
-    position: 'absolute', width: 120, height: 120, borderRadius: 60,
-    backgroundColor: 'rgba(255,255,255,0.08)', top: -20, right: -20,
-  },
-  decorCircle2: {
-    position: 'absolute', width: 80, height: 80, borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.06)', bottom: 10, left: -10,
-  },
-  signOutBtn: { alignSelf: 'flex-end', padding: spacing.xs },
-  heroTop: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.lg, marginTop: -spacing.sm },
-  avatarRing: {
-    width: 72, height: 72, borderRadius: 36, borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.6)', alignItems: 'center', justifyContent: 'center', marginRight: spacing.md,
-  },
-  avatarInner: {
-    width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.3)',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  avatarEmoji: { fontSize: 32 },
-  heroInfo: { flex: 1 },
-  heroLabel: { fontFamily: fonts.bold, fontSize: 11, color: 'rgba(255,255,255,0.8)', letterSpacing: 2 },
-  heroName: { fontFamily: fonts.extraBold, fontSize: 24, color: colors.white, marginTop: 2 },
-  levelBadge: {
-    width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.25)',
-    alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(255,255,255,0.5)',
-  },
-  levelNum: { fontFamily: fonts.extraBold, fontSize: 22, color: colors.white, lineHeight: 24 },
-  levelText: { fontFamily: fonts.bold, fontSize: 9, color: 'rgba(255,255,255,0.8)', letterSpacing: 1 },
-  xpSection: { marginBottom: spacing.md },
-  xpBarBg: { height: 12, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 6, overflow: 'hidden', marginBottom: spacing.xs },
-  xpBarFill: { height: '100%', borderRadius: 6 },
-  xpText: { fontFamily: fonts.semiBold, fontSize: 12, color: 'rgba(255,255,255,0.9)', textAlign: 'right' },
-  chips: {
-    flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.12)', borderRadius: borderRadius.xl, padding: spacing.md,
-  },
-  chip: { flex: 1, alignItems: 'center' },
-  chipEmoji: { fontSize: 22 },
-  chipValue: { fontFamily: fonts.extraBold, fontSize: 20, color: colors.white, marginTop: 2 },
-  chipLabel: { fontFamily: fonts.regular, fontSize: 10, color: 'rgba(255,255,255,0.75)' },
-  chipDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.2)', marginVertical: 4 },
 
-  // Quick actions
-  quickActions: { flexDirection: 'row', justifyContent: 'space-between' },
-  quickAction: { alignItems: 'center', flex: 1 },
-  quickActionIcon: {
-    width: 56, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.xs, ...shadows.md,
+  particle: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
   },
-  quickActionEmoji: { fontSize: 24 },
-  quickActionLabel: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.textSecondary, textAlign: 'center' },
+  particleA: { top: '18%', left: '12%' },
+  particleB: { top: '32%', right: '18%' },
 
-  section: { paddingHorizontal: spacing.lg, marginBottom: spacing.lg },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.md },
-  sectionTitle: { fontFamily: fonts.bold, fontSize: 18, color: colors.text, marginBottom: spacing.md },
-  seeAll: { fontFamily: fonts.semiBold, fontSize: 14, color: colors.secondary },
-  missionCard: { marginBottom: spacing.sm },
-  missionRow: { flexDirection: 'row', alignItems: 'center' },
-  missionIconBox: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: spacing.md },
-  missionIcon: { fontSize: 24 },
-  missionInfo: { flex: 1 },
-  missionTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.text },
-  missionMeta: { fontFamily: fonts.regular, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  topEyebrow: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    letterSpacing: 2,
+    color: colors.textSecondary,
+  },
+  topName: { fontFamily: fonts.extraBold, fontSize: 22, color: colors.primary },
+  iconBtn: { padding: spacing.sm },
 
-  // Reward preview
-  rewardPreviewCard: { alignItems: 'center', marginRight: spacing.sm, width: 110, paddingVertical: spacing.lg },
-  rewardEmoji: { fontSize: 32, marginBottom: spacing.sm },
-  rewardName: { fontFamily: fonts.bold, fontSize: 13, color: colors.text, textAlign: 'center' },
-  rewardProgressBg: { width: '80%', height: 4, backgroundColor: colors.backgroundSecondary, borderRadius: 2, marginTop: spacing.sm, overflow: 'hidden' },
-  rewardProgressFill: { height: '100%', backgroundColor: colors.success, borderRadius: 2 },
-  rewardCoins: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.secondary, marginTop: 4 },
+  spriteWrap: {
+    alignItems: 'center',
+    marginTop: spacing.md,
+  },
+  creatureName: {
+    textAlign: 'center',
+    fontFamily: fonts.extraBold,
+    fontSize: 26,
+    color: colors.primary,
+    marginTop: spacing.md,
+  },
+  creatureSub: {
+    textAlign: 'center',
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
 
-  // Badges
-  badgeCard: { alignItems: 'center', marginRight: spacing.sm, width: 110, paddingVertical: spacing.lg },
-  badgeEmoji: { fontSize: 32, marginBottom: spacing.sm },
-  badgeName: { fontFamily: fonts.bold, fontSize: 13, color: colors.text, textAlign: 'center' },
-  badgeDesc: { fontFamily: fonts.regular, fontSize: 11, color: colors.textSecondary, textAlign: 'center', marginTop: 2 },
+  happinessBlock: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+  },
+  happinessRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  happinessLabel: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    color: colors.textSecondary,
+  },
+  happinessValue: { fontFamily: fonts.bold, fontSize: 12, color: colors.primary },
+  happinessBg: {
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.borderLight,
+    overflow: 'hidden',
+  },
+  happinessFill: { height: '100%', borderRadius: 5 },
+
+  traitsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+  },
+  traitItem: { alignItems: 'center', position: 'relative' },
+  traitCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xs,
+    ...shadows.sm,
+  },
+  traitCount: { fontFamily: fonts.extraBold, fontSize: 16 },
+  traitName: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.textSecondary },
+  tooltip: {
+    position: 'absolute',
+    top: -34,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+  },
+  tooltipTxt: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.white },
+
+  // Reward goal band
+  rewardBand: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    ...shadows.sm,
+  },
+  rewardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  rewardName: {
+    flex: 1,
+    fontFamily: fonts.bold,
+    fontSize: 14,
+    color: colors.primary,
+  },
+  rewardProgress: { fontFamily: fonts.bold, fontSize: 12, color: colors.textSecondary },
+  rewardBarBg: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.borderLight,
+    overflow: 'hidden',
+  },
+  rewardBarFill: {
+    height: '100%',
+    backgroundColor: colors.accent,
+    borderRadius: 4,
+  },
+  rewardRedeem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.accent,
+    borderRadius: borderRadius.md,
+  },
+  rewardRedeemTxt: { fontFamily: fonts.extraBold, color: colors.primary, fontSize: 14 },
+  rewardError: { fontFamily: fonts.semiBold, color: colors.error, marginTop: 6, fontSize: 12 },
+
+  // Shelf
+  shelfBlock: { marginTop: spacing.lg },
+  sectionLabel: {
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    letterSpacing: 2,
+    color: colors.textSecondary,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  shelfScroll: { paddingHorizontal: spacing.lg, gap: spacing.sm },
+  shelfEmpty: {
+    marginHorizontal: spacing.lg,
+    padding: spacing.lg,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  shelfEmptyTxt: {
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  careCard: {
+    width: 110,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    marginRight: spacing.sm,
+    alignItems: 'center',
+  },
+  careIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xs,
+  },
+  careName: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: colors.primary,
+    textTransform: 'capitalize',
+  },
+  careTrait: { fontFamily: fonts.semiBold, fontSize: 10, marginTop: 2 },
+
+  // Feed error toast
+  feedToast: {
+    position: 'absolute',
+    bottom: spacing.lg,
+    left: spacing.lg,
+    right: spacing.lg,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.errorLight,
+    borderWidth: 1,
+    borderColor: colors.error,
+    alignItems: 'center',
+  },
+  feedToastTxt: {
+    fontFamily: fonts.semiBold,
+    fontSize: 13,
+    color: colors.error,
+  },
+
+  // Reward unlock toast
+  unlockToast: {
+    position: 'absolute',
+    top: spacing.xl + spacing.md,
+    left: spacing.lg,
+    right: spacing.lg,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    ...shadows.md,
+  },
+  unlockToastTxt: {
+    fontFamily: fonts.extraBold,
+    fontSize: 14,
+    color: colors.primary,
+    letterSpacing: 0.5,
+  },
 });

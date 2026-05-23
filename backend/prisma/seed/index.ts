@@ -1,10 +1,14 @@
 import { PrismaClient } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
 import { seedThemes } from './themes.seed';
 import { seedTemplates } from './templates.seed';
 import { seedAchievements } from './achievements.seed';
-import { seedMiniGames } from './mini-games.seed';
+// NOTE: Mini-games are intentionally NOT seeded for the demo.
+// The demo is a creature-nurturing experience only — there are no mini-games.
+// The MiniGame / MiniGameUnlock tables remain in the schema as a parking spot
+// for a future post-demo phase. See plans/demo-flow.md §2 ("Explicitly OUT of demo scope").
+// import { seedMiniGames } from './mini-games.seed';
 import { seedItems } from './items.seed';
+import { seedCreatures } from './creatures.seed';
 import { seedDemoFamily } from './demo-family.seed';
 
 const prisma = new PrismaClient();
@@ -15,19 +19,19 @@ async function main() {
   // Seed global data
   console.log('📚 Seeding mission profile themes...');
   await seedThemes(prisma);
-  
+
   console.log('📝 Seeding mission templates...');
   await seedTemplates(prisma);
-  
+
   console.log('🏆 Seeding achievements...');
   await seedAchievements(prisma);
-  
-  console.log('🎮 Seeding mini-games...');
-  await seedMiniGames(prisma);
-  
+
   console.log('🎁 Seeding inventory items...');
   await seedItems(prisma);
-  
+
+  console.log('🐣 Registering creature species roster...');
+  await seedCreatures(prisma);
+
   // Seed demo data
   console.log('\n👨‍👩‍👧‍👦 Seeding demo family...');
   await seedDemoFamily(prisma);
