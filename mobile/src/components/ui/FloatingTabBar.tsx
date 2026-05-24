@@ -1,40 +1,28 @@
 /**
- * FloatingTabBar — Polish floating pill tab bar.
+ * FloatingTabBar — Polish floating pill tab bar with crafted SVG icons + always-on labels.
  *
- * Custom implementation of the `tabBar` prop for expo-router's `Tabs`
- * (a.k.a. `@react-navigation/bottom-tabs`). Renders a horizontally-laid-out
- * pill that floats above screen content, with an amber-soft pill highlight +
- * label on the active tab and icon-only inactive tabs. Animation is driven by
- * RN's built-in `Animated` API (no Reanimated dep).
- *
- * Layout / sizing constants are exported so screens can pad their scroll
- * containers and avoid content being obscured behind the floating bar.
- *
- * Note on typing: `@react-navigation/bottom-tabs` is reachable at runtime
- * (bundled under expo-router's nested node_modules), but TypeScript's module
- * resolution from `mobile/src/...` can't always find it. We therefore declare
- * a permissive local mirror of `BottomTabBarProps` — `descriptors` is typed
- * as `Record<string, any>` so the navigator's real `BottomTabDescriptor` slots
- * in without friction, and we narrow option fields at the call site.
+ * Custom implementation of the `tabBar` prop for expo-router's `Tabs`. Each tab
+ * shows the route's tabBarIcon (the design-system `Icon` primitive) on top and
+ * a short label below. Active tab gets a warm amber-soft pill background.
+ * Animation is driven by RN's built-in `Animated` (no Reanimated dep).
  */
 import React, { useEffect, useRef } from 'react';
 import {
   Animated,
   Pressable,
   StyleSheet,
+  Text,
   View,
   type GestureResponderEvent,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, typographyTokens } from '@/theme';
+import { colors } from '@/theme';
 
 export const FLOATING_TAB_BAR_HEIGHT = 96;
-export const FLOATING_TAB_BAR_SCREEN_PADDING = 110;
+export const FLOATING_TAB_BAR_SCREEN_PADDING = 120;
 
 // ---------------------------------------------------------------------------
 // Local structural types — permissive mirror of @react-navigation/bottom-tabs
-// payloads. We accept `any` for descriptor entries + navigation so the real
-// navigator types (which we can't directly import in this tree) flow in.
 // ---------------------------------------------------------------------------
 interface NavRoute {
   key: string;
@@ -57,6 +45,22 @@ interface BottomTabBarProps {
 }
 
 // ---------------------------------------------------------------------------
+// Label override registry — keyed by Expo Router route name. Used when the
+// route's `title` / `tabBarLabel` is too long or oddly cased for a tight pill.
+// ---------------------------------------------------------------------------
+const LABEL_OVERRIDES: Record<string, string> = {
+  index: 'Home',
+  children: 'Heroes',
+  missions: 'Missions',
+  rewards: 'Rewards',
+  'approvals/index': 'Approvals',
+};
+
+function labelForRoute(name: string, fallback: string): string {
+  return LABEL_OVERRIDES[name] ?? fallback;
+}
+
+// ---------------------------------------------------------------------------
 // Color helpers
 // ---------------------------------------------------------------------------
 function hexWithAlpha(hex: string, alpha: number): string {
@@ -75,15 +79,15 @@ const NAVY_DEEP = colors.navyDeep ?? colors.primary;
 const PARCHMENT_BG = (colors as { parchment?: string }).parchment ?? colors.cream;
 const BAR_BG = hexWithAlpha(PARCHMENT_BG, 0.94);
 const HAIRLINE = hexWithAlpha(NAVY_DEEP, 0.08);
-const INACTIVE_ICON = hexWithAlpha(NAVY_DEEP, 0.55);
+const INACTIVE_LABEL = hexWithAlpha(NAVY_DEEP, 0.6);
 
 // ---------------------------------------------------------------------------
 // Tab item
 // ---------------------------------------------------------------------------
 interface TabItemProps {
   focused: boolean;
-  label: string;
   icon: React.ReactNode;
+  label: string;
   badge: boolean;
   onPress: (e: GestureResponderEvent) => void;
   onLongPress: () => void;
@@ -93,15 +97,14 @@ interface TabItemProps {
 
 function TabItem({
   focused,
-  label,
   icon,
+  label,
   badge,
   onPress,
   onLongPress,
   accessibilityLabel,
   testID,
 }: TabItemProps) {
-  // Drive label opacity (0 → 1) + pill scale (0.95 → 1) from one Animated.Value.
   const anim = useRef(new Animated.Value(focused ? 1 : 0)).current;
 
   useEffect(() => {
@@ -114,7 +117,7 @@ function TabItem({
 
   const pillScale = anim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.95, 1],
+    outputRange: [0.96, 1],
   });
 
   return (
@@ -125,7 +128,7 @@ function TabItem({
       accessibilityState={focused ? { selected: true } : {}}
       accessibilityLabel={accessibilityLabel ?? label}
       testID={testID}
-      hitSlop={8}
+      hitSlop={6}
       style={styles.tabItem}
     >
       <Animated.View
@@ -139,6 +142,13 @@ function TabItem({
           {icon}
           {badge ? <View style={styles.badge} /> : null}
         </View>
+        <Text
+          style={[styles.label, focused ? styles.labelActive : styles.labelInactive]}
+          numberOfLines={1}
+          allowFontScaling={false}
+        >
+          {label}
+        </Text>
       </Animated.View>
     </Pressable>
   );
@@ -151,14 +161,9 @@ export default function FloatingTabBar(props: BottomTabBarProps) {
   const { state, descriptors, navigation } = props;
   const insets = useSafeAreaInsets();
 
-  // Hide routes that the navigator marks as not displayable (expo-router
-  // emits `tabBarItemStyle: { display: 'none' }` for `href: null` routes,
-  // which is the public-API hook we should look at).
   const visibleRoutes = state.routes.filter((route: NavRoute) => {
     const descriptor = descriptors[route.key];
     if (!descriptor) return false;
-    // expo-router hides `href: null` tabs by setting
-    // `tabBarItemStyle: { display: 'none' }`.
     const itemStyle = descriptor.options.tabBarItemStyle as
       | { display?: 'flex' | 'none' }
       | null
@@ -170,7 +175,7 @@ export default function FloatingTabBar(props: BottomTabBarProps) {
   return (
     <View
       pointerEvents="box-none"
-      style={[styles.wrap, { bottom: insets.bottom + 12 }]}
+      style={[styles.wrap, { bottom: insets.bottom + 10 }]}
     >
       <View style={styles.bar}>
         {visibleRoutes.map((route: NavRoute) => {
@@ -181,14 +186,15 @@ export default function FloatingTabBar(props: BottomTabBarProps) {
           );
           const focused = state.index === stateIndex;
 
-          const rawLabel =
+          const fallbackLabel =
             typeof options.tabBarLabel === 'string'
               ? options.tabBarLabel
               : typeof options.title === 'string'
                 ? options.title
                 : route.name;
 
-          const iconColor = focused ? NAVY_DEEP : INACTIVE_ICON;
+          const label = labelForRoute(route.name, fallbackLabel);
+          const iconColor = focused ? NAVY_DEEP : INACTIVE_LABEL;
           const iconNode = options.tabBarIcon
             ? options.tabBarIcon({
                 focused,
@@ -196,7 +202,6 @@ export default function FloatingTabBar(props: BottomTabBarProps) {
                 size: 22,
               })
             : null;
-
           const badge = Boolean(options.tabBarBadge);
 
           const onPress = (_event: GestureResponderEvent) => {
@@ -206,8 +211,6 @@ export default function FloatingTabBar(props: BottomTabBarProps) {
               canPreventDefault: true,
             });
             if (!focused && !navEvent.defaultPrevented) {
-              // navigation.navigate's signature requires a known route name;
-              // we forward the typed-erased route name + params.
               (navigation as unknown as {
                 navigate: (name: string, params?: object) => void;
               }).navigate(route.name, route.params);
@@ -225,8 +228,8 @@ export default function FloatingTabBar(props: BottomTabBarProps) {
             <TabItem
               key={route.key}
               focused={focused}
-              label={rawLabel}
               icon={iconNode}
+              label={label}
               badge={badge}
               onPress={onPress}
               onLongPress={onLongPress}
@@ -243,19 +246,20 @@ export default function FloatingTabBar(props: BottomTabBarProps) {
 const styles = StyleSheet.create({
   wrap: {
     position: 'absolute',
-    left: 12,
-    right: 12,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
   },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: 'stretch',
-    width: '100%',
-    gap: 2,
+    alignSelf: 'center',
+    maxWidth: '100%',
+    gap: 0,
     backgroundColor: BAR_BG,
     borderRadius: 28,
-    paddingHorizontal: 4,
+    paddingHorizontal: 6,
     paddingVertical: 8,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: HAIRLINE,
@@ -264,31 +268,25 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 20,
     elevation: 6,
-    overflow: 'hidden',
   },
   tabItem: {
-    minHeight: 48,
-    minWidth: 0,
-    flexGrow: 1,
-    flexBasis: 0,
-    flexShrink: 1,
+    minHeight: 56,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
   },
   pill: {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 22,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 20,
+    minWidth: 56,
   },
   pillActive: {
     backgroundColor: ACTIVE_PILL_BG,
-    paddingHorizontal: 6,
-    paddingVertical: 8,
   },
   iconWrap: {
     alignItems: 'center',
@@ -298,19 +296,25 @@ const styles = StyleSheet.create({
   },
   badge: {
     position: 'absolute',
-    top: 4,
-    right: 4,
+    top: 0,
+    right: -2,
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: colors.accent,
   },
   label: {
-    marginTop: 2,
-    fontFamily: typographyTokens.captionEmphasis.fontFamily,
+    marginTop: 3,
     fontSize: 11,
-    lineHeight: 13,
-    fontWeight: '600',
+    lineHeight: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0.2,
+  },
+  labelActive: {
     color: NAVY_DEEP,
+  },
+  labelInactive: {
+    color: INACTIVE_LABEL,
   },
 });
