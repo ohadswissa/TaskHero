@@ -18,7 +18,8 @@ module.exports = function (api) {
           },
         },
       }),
-      'react-native-reanimated/plugin',
+      // Reanimated/worklets babel plugin disabled — the package is aliased to
+      // a JS-only shim in metro.config.js to keep Expo Go on iOS working.
       [
         'module-resolver',
         {

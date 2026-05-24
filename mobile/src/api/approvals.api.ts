@@ -7,6 +7,10 @@ export interface VerifyPayload {
   parentMessage?: string;
 }
 
+export interface ApprovalsTodayStats {
+  approvedToday: number;
+}
+
 export const approvalsApi = {
   /**
    * `GET /approvals/pending` — pending submissions across the family, oldest first.
@@ -14,6 +18,15 @@ export const approvalsApi = {
    */
   listPending: async (): Promise<PendingApprovalRow[]> => {
     const res = await apiClient.get<PendingApprovalRow[]>('/approvals/pending');
+    return res.data;
+  },
+
+  /**
+   * `GET /approvals/stats/today` — count of approvals decided today in the
+   * family timezone. Used by the parent dashboard "Approved today" StatCard.
+   */
+  getTodayStats: async (): Promise<ApprovalsTodayStats> => {
+    const res = await apiClient.get<ApprovalsTodayStats>('/approvals/stats/today');
     return res.data;
   },
 

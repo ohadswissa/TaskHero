@@ -19,14 +19,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Tabs, useSegments, router } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { colors, shadows, fonts } from '@/theme';
+import { colors, spacing } from '@/theme';
 import { creaturesApi, queryKeys } from '@/api';
 import type { NotificationRow } from '@/api';
 import { useAuthStore } from '@/stores/authStore';
 import { useNotificationPolling } from '@/hooks/useNotificationPolling';
 import { HeroMailOverlay } from '@/components/notifications/HeroMailOverlay';
+import { FloatingTabBar, GradientBackdrop, Icon, type IconName } from '@/components/ui';
 
 export default function ChildLayout() {
   const segments = useSegments();
@@ -108,72 +108,62 @@ export default function ChildLayout() {
 
   void isError;
 
+  // Polish-B2: outside-of-Hub child screens are wrapped in a soft cream
+  // GradientBackdrop. The Hub itself owns its species habitat backdrop.
+  // Onboarding screens have their own backdrops; we skip the wrap there.
+  const TabsTree = (
+    <Tabs
+      tabBar={(props) =>
+        inOnboarding ? null : <FloatingTabBar {...props} />
+      }
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: colors.amberDeep,
+        tabBarInactiveTintColor: colors.textSecondary,
+      }}
+    >
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Hub',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon iconName="sparkle" color={color} focused={focused} badge={unreadHeroMailCount > 0} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="missions"
+        options={{
+          title: 'Missions',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon iconName="scroll" color={color} focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="rewards"
+        options={{
+          title: 'Rewards',
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon iconName="crown" color={color} focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen name="onboarding" options={{ href: null }} />
+      <Tabs.Screen name="mission/[id]" options={{ href: null }} />
+    </Tabs>
+  );
+
   return (
     <>
-      <Tabs
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: colors.accent,
-          tabBarInactiveTintColor: colors.textSecondary,
-          tabBarStyle: inOnboarding
-            ? { display: 'none' }
-            : {
-                backgroundColor: colors.surface,
-                borderTopWidth: 0,
-                ...shadows.md,
-                height: 68,
-                paddingBottom: 10,
-                paddingTop: 8,
-              },
-          tabBarLabelStyle: {
-            fontFamily: fonts.semiBold,
-            fontSize: 10,
-            marginTop: 2,
-          },
-        }}
-      >
-        <Tabs.Screen
-          name="index"
-          options={{
-            title: 'Hub',
-            tabBarIcon: ({ color, focused }) => (
-              <TabIcon
-                name="home"
-                color={color}
-                focused={focused}
-                badge={unreadHeroMailCount > 0}
-              />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="missions"
-          options={{
-            title: 'Missions',
-            tabBarIcon: ({ color, focused }) => (
-              <TabIcon name="flag" color={color} focused={focused} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="rewards"
-          options={{
-            title: 'Rewards',
-            tabBarIcon: ({ color, focused }) => (
-              <TabIcon name="gift" color={color} focused={focused} />
-            ),
-          }}
-        />
-        {/* Hidden routes (legacy + onboarding + dynamic detail) */}
-        <Tabs.Screen name="onboarding" options={{ href: null }} />
-        <Tabs.Screen name="mission" options={{ href: null }} />
-        <Tabs.Screen name="creature" options={{ href: null }} />
-        <Tabs.Screen name="avatar" options={{ href: null }} />
-        <Tabs.Screen name="room" options={{ href: null }} />
-        <Tabs.Screen name="games" options={{ href: null }} />
-      </Tabs>
+      {inOnboarding ? (
+        TabsTree
+      ) : (
+        <GradientBackdrop variant="cream" intensity="subtle">
+          {TabsTree}
+        </GradientBackdrop>
+      )}
 
-      {/* Hero Mail overlay — one at a time, FIFO queue */}
       {currentOverlay && (
         <HeroMailOverlay
           key={currentOverlay.id}
@@ -187,24 +177,20 @@ export default function ChildLayout() {
 }
 
 function TabIcon({
-  name,
+  iconName,
   color,
   focused,
   badge,
 }: {
-  name: string;
+  iconName: IconName;
   color: string;
   focused: boolean;
   badge?: boolean;
 }) {
   return (
-    <View style={{ alignItems: 'center', justifyContent: 'center', minWidth: 32 }}>
+    <View style={{ alignItems: 'center', justifyContent: 'center', minWidth: 36 }}>
       <View>
-        <Ionicons
-          name={(focused ? name : `${name}-outline`) as keyof typeof Ionicons.glyphMap}
-          size={22}
-          color={color}
-        />
+        <Icon name={iconName} size={24} color={color} strokeWidth={focused ? 2.1 : 1.7} />
         {badge && <View style={styles.badge} />}
       </View>
       {focused && (
@@ -213,7 +199,7 @@ function TabIcon({
             width: 18,
             height: 3,
             borderRadius: 2,
-            backgroundColor: colors.accent,
+            backgroundColor: colors.amberDeep,
             marginTop: 4,
           }}
         />
@@ -233,11 +219,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -4,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.accent,
-    borderWidth: 1,
-    borderColor: colors.surface,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: colors.amberDeep,
+    borderWidth: 1.5,
+    borderColor: colors.creamSoft,
   },
 });
+// `spacing` kept imported for future tabBar tweaks
+void spacing;

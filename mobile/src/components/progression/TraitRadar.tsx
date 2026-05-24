@@ -17,8 +17,16 @@
  */
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Line, Polygon, Text as SvgText } from 'react-native-svg';
-import { colors, fonts, traits } from '@/theme';
+import Svg, {
+  Circle,
+  Defs,
+  Line,
+  Polygon,
+  RadialGradient,
+  Stop,
+  Text as SvgText,
+} from 'react-native-svg';
+import { colors, fonts, traits, typographyTokens } from '@/theme';
 
 interface TraitRadarProps {
   strength: number;
@@ -112,28 +120,68 @@ export function TraitRadar({
   return (
     <View style={[styles.container, { width: size, height: size }]}>
       <Svg width={size} height={size}>
-        {/* Grid rings */}
+        <Defs>
+          {/* Polish-B3: radial amber → cream fill behind the value polygon. */}
+          <RadialGradient
+            id="traitRadarFill"
+            cx="50%"
+            cy="50%"
+            r="50%"
+            fx="50%"
+            fy="50%"
+          >
+            <Stop offset="0%" stopColor={colors.accent} stopOpacity={0.55} />
+            <Stop offset="100%" stopColor={colors.cream} stopOpacity={0.15} />
+          </RadialGradient>
+        </Defs>
+
+        {/* Grid rings — soft navy at 10% opacity. */}
         {rings.map((pts, i) => (
           <Polygon
             key={i}
             points={pts}
             fill="none"
-            stroke={colors.borderLight}
-            strokeWidth={i === rings.length - 1 ? 1.5 : 1}
+            stroke={colors.primary}
+            strokeOpacity={0.1}
+            strokeWidth={1}
           />
         ))}
         {/* Spokes */}
-        <Line x1={cx} y1={cy} x2={wisdomOuter.x} y2={wisdomOuter.y} stroke={colors.borderLight} strokeWidth={1} />
-        <Line x1={cx} y1={cy} x2={strengthOuter.x} y2={strengthOuter.y} stroke={colors.borderLight} strokeWidth={1} />
-        <Line x1={cx} y1={cy} x2={heartOuter.x} y2={heartOuter.y} stroke={colors.borderLight} strokeWidth={1} />
+        <Line
+          x1={cx}
+          y1={cy}
+          x2={wisdomOuter.x}
+          y2={wisdomOuter.y}
+          stroke={colors.primary}
+          strokeOpacity={0.1}
+          strokeWidth={1}
+        />
+        <Line
+          x1={cx}
+          y1={cy}
+          x2={strengthOuter.x}
+          y2={strengthOuter.y}
+          stroke={colors.primary}
+          strokeOpacity={0.1}
+          strokeWidth={1}
+        />
+        <Line
+          x1={cx}
+          y1={cy}
+          x2={heartOuter.x}
+          y2={heartOuter.y}
+          stroke={colors.primary}
+          strokeOpacity={0.1}
+          strokeWidth={1}
+        />
 
-        {/* Filled value polygon */}
+        {/* Filled value polygon — radial amber gradient, navy outline. */}
         <Polygon
           points={fillPoints}
-          fill={colors.accent}
-          fillOpacity={0.35}
+          fill="url(#traitRadarFill)"
           stroke={colors.primary}
-          strokeWidth={2}
+          strokeWidth={1.5}
+          strokeLinejoin="round"
         />
 
         {/* Value dots */}
@@ -141,45 +189,46 @@ export function TraitRadar({
         <Circle cx={strengthPt.x} cy={strengthPt.y} r={5} fill={traits.strength} />
         <Circle cx={heartPt.x} cy={heartPt.y} r={5} fill={traits.heart} />
 
-        {/* Numeric value labels next to each vertex */}
+        {/* Numeric value labels next to each vertex — heading3 size, navy ink. */}
         <SvgText
           x={wisdomPt.x}
-          y={wisdomPt.y - 10}
-          fontSize={12}
-          fontWeight="bold"
-          fill={traits.wisdom}
+          y={wisdomPt.y - 12}
+          fontSize={typographyTokens.heading3.fontSize}
+          fontFamily={typographyTokens.heading3.fontFamily}
+          fill={colors.primary}
           textAnchor="middle"
         >
           {wisdom}
         </SvgText>
         <SvgText
           x={strengthPt.x - 12}
-          y={strengthPt.y + 4}
-          fontSize={12}
-          fontWeight="bold"
-          fill={traits.strength}
+          y={strengthPt.y + 6}
+          fontSize={typographyTokens.heading3.fontSize}
+          fontFamily={typographyTokens.heading3.fontFamily}
+          fill={colors.primary}
           textAnchor="end"
         >
           {strength}
         </SvgText>
         <SvgText
           x={heartPt.x + 12}
-          y={heartPt.y + 4}
-          fontSize={12}
-          fontWeight="bold"
-          fill={traits.heart}
+          y={heartPt.y + 6}
+          fontSize={typographyTokens.heading3.fontSize}
+          fontFamily={typographyTokens.heading3.fontFamily}
+          fill={colors.primary}
           textAnchor="start"
         >
           {heart}
         </SvgText>
 
-        {/* Axis labels */}
+        {/* Axis labels — captionEmphasis, trait-colored, slight tracking. */}
         <SvgText
           x={wisdomLabel.x}
           y={wisdomLabel.y - 2}
-          fontSize={11}
-          fontWeight="bold"
+          fontSize={typographyTokens.captionEmphasis.fontSize}
+          fontFamily={typographyTokens.captionEmphasis.fontFamily}
           fill={traits.wisdom}
+          letterSpacing={0.6}
           textAnchor="middle"
         >
           WISDOM
@@ -187,9 +236,10 @@ export function TraitRadar({
         <SvgText
           x={strengthLabel.x}
           y={strengthLabel.y + 4}
-          fontSize={11}
-          fontWeight="bold"
+          fontSize={typographyTokens.captionEmphasis.fontSize}
+          fontFamily={typographyTokens.captionEmphasis.fontFamily}
           fill={traits.strength}
+          letterSpacing={0.6}
           textAnchor="middle"
         >
           STRENGTH
@@ -197,9 +247,10 @@ export function TraitRadar({
         <SvgText
           x={heartLabel.x}
           y={heartLabel.y + 4}
-          fontSize={11}
-          fontWeight="bold"
+          fontSize={typographyTokens.captionEmphasis.fontSize}
+          fontFamily={typographyTokens.captionEmphasis.fontFamily}
           fill={traits.heart}
+          letterSpacing={0.6}
           textAnchor="middle"
         >
           HEART

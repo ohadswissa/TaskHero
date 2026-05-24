@@ -29,6 +29,45 @@ import { computeEvolutionStage, isStageUpgrade } from './helpers/evolution';
 // =========================================================================
 const NOTIFICATION_TYPE_HERO_MAIL = 'hero_mail';
 
+/**
+ * Compute the UTC `Date` corresponding to 00:00:00 of `at` in the given
+ * IANA timezone. Implemented via Intl.DateTimeFormat to avoid bringing in
+ * a date-fns / dayjs dependency.
+ */
+function startOfDayInTimezone(at: Date, timezone: string): Date {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(at);
+    const pick = (t: string) => parts.find((p) => p.type === t)?.value ?? '0';
+    const y = Number(pick('year'));
+    const mo = Number(pick('month'));
+    const d = Number(pick('day'));
+    const h = Number(pick('hour') === '24' ? '0' : pick('hour'));
+    const mi = Number(pick('minute'));
+    const s = Number(pick('second'));
+    // Wall-clock time in `timezone` for `at`. The offset between wall-clock
+    // and UTC equals tzOffsetMs = at.getTime() - wallUTC.
+    const wallUtc = Date.UTC(y, mo - 1, d, h, mi, s);
+    const offsetMs = at.getTime() - wallUtc;
+    // Start of day in wall-clock terms, then translate back to real UTC.
+    const startWallUtc = Date.UTC(y, mo - 1, d, 0, 0, 0);
+    return new Date(startWallUtc + offsetMs);
+  } catch {
+    // Fallback to UTC if the timezone is invalid.
+    const d = new Date(at);
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+  }
+}
+
 @Injectable()
 export class ApprovalsService {
   private readonly logger = new Logger(ApprovalsService.name);
@@ -76,6 +115,39 @@ export class ApprovalsService {
         },
       },
     });
+  }
+
+  /**
+   * Polish-B4 dashboard stat — number of submissions VERIFIED today (in the
+   * family's timezone). Counted via MissionApproval.createdAt with
+   * decision=APPROVED to avoid double counting if an assignment is re-queried.
+   * Family-scoped through the approving parent's familyId.
+   */
+  async todayStats(userId: string, familyId: string): Promise<{ approvedToday: number }> {
+    await this.resolveParentProfileId(userId);
+
+    const family = await this.prisma.family.findUnique({
+      where: { id: familyId },
+      select: { timezone: true },
+    });
+    const timezone = family?.timezone || 'UTC';
+    const startOfToday = startOfDayInTimezone(new Date(), timezone);
+
+    const approvedToday = await this.prisma.missionApproval.count({
+      where: {
+        decision: ApprovalDecision.APPROVED,
+        decidedAt: { gte: startOfToday },
+        submission: {
+          assignment: {
+            childProfile: {
+              user: { familyId },
+            },
+          },
+        },
+      },
+    });
+
+    return { approvedToday };
   }
 
   /**

@@ -1,46 +1,42 @@
 /**
- * HeroMailOverlay — M5b.
+ * HeroMailOverlay — M5b (Polish-B3 rebuild).
  *
  * Modal-style celebration surfaced when a `hero_mail` notification lands
- * for the calling child. Mirrors the parent-side celebration card from
- * (parent)/approvals/[id].tsx, but read FROM the child's perspective:
- * it's the warm letter that closes the verify loop.
+ * for the calling child. Functional wiring is unchanged:
  *
- * Props:
- *   notification — full row from the polling response. Its `data` field
- *                  is read as HeroMailData (see notifications.api.ts).
- *   onDismiss    — called on Continue tap OR backdrop tap. The parent
- *                  layout is responsible for popping the queue and
- *                  marking the row read.
+ *   Props:
+ *     notification     — full row from the polling response. `data` is
+ *                        read as HeroMailData.
+ *     onDismiss        — called on Continue / backdrop tap. The parent
+ *                        layout pops the queue and marks the row read.
+ *     creatureSpecies  — used for the inline old→new sprite preview.
+ *     previousStage    — best-effort prior-stage hint.
  *
- * Visual:
- *   - Backdrop: semi-transparent navy (rgba primary 0.55).
- *   - Card: cream panel, ribbon-style "Hero Mail" header, parchment
- *     parent message, awards chips, optional care/evolution/reward
- *     banners, amber Continue CTA.
- *   - Entrance animation: scale 0.85 → 1.0 + opacity 0 → 1 over 250ms.
+ * Polish-B3 swaps the visual chrome:
+ *   - Outer backdrop: `<GradientBackdrop variant="navy" intensity="rich">`
+ *     with a translucent navy scrim for legibility.
+ *   - Container: `<MailScroll>` with title, awards Chip header, italic
+ *     Scroll body, conditional Banners (care item / evolution / reward),
+ *     sprite preview Surface, and a footer-slot Continue CTA.
+ *   - `<CelebrationBurst>` overlays when evolution or reward callouts
+ *     are present.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import {
-  Animated,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
-  Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { router } from 'expo-router';
-import {
-  borderRadius,
-  colors,
-  fonts,
-  shadows,
-  spacing,
-  traitColor,
-  traitLabel,
-} from '@/theme';
+import { borderRadius, colors, spacing, traitColor, traitLabel } from '@/theme';
 import type {
   CreatureSpecies,
   EvolutionStage,
@@ -48,16 +44,26 @@ import type {
   NotificationRow,
 } from '@/api';
 import { SpeciesBadge } from '@/components/creature/SpeciesBadge';
+import {
+  AnimatedPressable,
+  Banner,
+  CelebrationBurst,
+  Chip,
+  GradientBackdrop,
+  Icon,
+  MailScroll,
+  Surface,
+  Typography,
+} from '@/components/ui';
 
 interface HeroMailOverlayProps {
   notification: NotificationRow;
   onDismiss: () => void;
-  /** The species of the calling child's creature — needed to render the inline
-   * old→new evolution preview sprites. Optional because the overlay can still
-   * render its other banners without it. */
+  /** Species of the calling child's creature — needed to render the inline
+   *  old→new evolution preview sprites. Optional. */
   creatureSpecies?: CreatureSpecies;
-  /** The stage BEFORE this verification, so the banner can show old→new. If
-   * unknown we infer the prior stage from the new one (best-effort). */
+  /** Stage BEFORE this verification, so the preview can show old→new. If
+   *  unknown the overlay infers the prior stage from the new one. */
   previousStage?: EvolutionStage;
 }
 
@@ -73,6 +79,21 @@ function parseHeroMailData(raw: unknown): HeroMailData | null {
   return raw as HeroMailData;
 }
 
+function chipToneForTrait(
+  t: string | null | undefined,
+): 'strength' | 'wisdom' | 'heart' | 'neutral' {
+  switch (t) {
+    case 'STRENGTH':
+      return 'strength';
+    case 'WISDOM':
+      return 'wisdom';
+    case 'HEART':
+      return 'heart';
+    default:
+      return 'neutral';
+  }
+}
+
 export function HeroMailOverlay({
   notification,
   onDismiss,
@@ -81,276 +102,241 @@ export function HeroMailOverlay({
 }: HeroMailOverlayProps) {
   const data = parseHeroMailData(notification.data);
 
-  // Entrance animation
-  const scale = useRef(new Animated.Value(0.85)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-  // Inline evolution preview pulse (loops while overlay is open)
-  const evolvePulse = useRef(new Animated.Value(1)).current;
+  // Entrance animation (Reanimated v3).
+  const scale = useSharedValue(0.85);
+  const opacity = useSharedValue(0);
+
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(scale, { toValue: 1, duration: 250, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
-    ]).start();
+    scale.value = withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) });
+    opacity.value = withTiming(1, { duration: 260 });
+  }, [scale, opacity, notification.id]);
 
-    if (data?.evolutionStage) {
-      const loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(evolvePulse, {
-            toValue: 1.08,
-            duration: 700,
-            useNativeDriver: true,
-          }),
-          Animated.timing(evolvePulse, {
-            toValue: 1,
-            duration: 700,
-            useNativeDriver: true,
-          }),
-        ]),
-      );
-      loop.start();
-      return () => loop.stop();
-    }
-    return undefined;
-  }, [scale, opacity, evolvePulse, notification.id, data?.evolutionStage]);
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
 
-  /** Dismiss the overlay, then route to the Hub so the full evolution animation
-   * can play (Hub picks up the stage change via the previous-value ref). */
+  /** Dismiss the overlay, then route to the Hub so the full evolution
+   *  animation can play (Hub picks up the stage change via prev-ref). */
   const handleSeeCreature = () => {
     onDismiss();
-    // Defer the route push so the modal close animation can run first.
     setTimeout(() => {
       router.push('/(child)' as never);
     }, 50);
   };
 
   if (!data) {
-    // Defensive: if data is malformed, still let the user dismiss.
     return (
       <Modal visible transparent animationType="fade" onRequestClose={onDismiss}>
-        <Pressable style={styles.backdrop} onPress={onDismiss}>
-          <View style={styles.card}>
-            <Text style={styles.fallbackTxt}>{notification.title}</Text>
-            <Text style={styles.fallbackBody}>{notification.body}</Text>
-            <TouchableOpacity style={styles.cta} onPress={onDismiss}>
-              <Text style={styles.ctaTxt}>Continue ✨</Text>
-            </TouchableOpacity>
+        <Pressable
+          style={styles.backdrop}
+          onPress={onDismiss}
+          accessibilityLabel="Dismiss hero mail"
+        >
+          <View style={styles.fallback}>
+            <Surface variant="parchment" padding="lg" radius="lg">
+              <Typography.Heading level={2} align="center" tone="onParchment">
+                {notification.title}
+              </Typography.Heading>
+              <Typography.Body align="center" tone="onParchment">
+                {notification.body}
+              </Typography.Body>
+              <AnimatedPressable
+                onPress={onDismiss}
+                accessibilityLabel="Acknowledge Hero Mail and continue"
+                style={styles.fallbackCta}
+              >
+                <Typography.Body tone="onNavy" align="center">
+                  Continue ✨
+                </Typography.Body>
+              </AnimatedPressable>
+            </Surface>
           </View>
         </Pressable>
       </Modal>
     );
   }
 
-  const tColor = traitColor(data.traitCategory);
+  const careItemPresent = !!data.careItemId;
+  const evolutionPresent = !!data.evolutionStage;
+  const rewardPresent = !!data.rewardUnlockedId;
+  const burstActive = evolutionPresent || rewardPresent;
+
+  // ---------------- MailScroll slots ----------------
+  const awardsHeader = (
+    <View style={styles.awardsRow}>
+      <Chip label={`+${data.xpAwarded} XP`} tone="accent" size="md" />
+      <Chip label={`+${data.coinsAwarded} coins`} tone="warning" size="md" />
+      <Chip
+        label={`${traitLabel(data.traitCategory)} +1`}
+        tone={chipToneForTrait(data.traitCategory)}
+        size="md"
+        icon={
+          <View
+            style={[
+              styles.traitDot,
+              { backgroundColor: traitColor(data.traitCategory) },
+            ]}
+          />
+        }
+      />
+    </View>
+  );
+
+  const body = (
+    <View>
+      <Typography.Scroll tone="onParchment" align="center">
+        “{data.parentMessage ?? notification.body}”
+      </Typography.Scroll>
+
+      {careItemPresent && (
+        <View style={styles.bannerSlot}>
+          <Banner
+            tone="info"
+            icon="sparkle"
+            message={`You earned ${data.careItemName.replace(/_/g, ' ')} — feed your creature!`}
+          />
+        </View>
+      )}
+
+      {evolutionPresent && (
+        <View style={styles.bannerSlot}>
+          <Banner
+            tone="success"
+            icon="sparkle"
+            message={`Your creature evolved into ${data.evolutionStage}!`}
+          />
+        </View>
+      )}
+
+      {rewardPresent && (
+        <View style={styles.bannerSlot}>
+          <Banner
+            tone="warning"
+            icon="crown"
+            message={`🎉 Reward unlocked!`}
+          />
+        </View>
+      )}
+
+      {/* Old → New sprite preview */}
+      {evolutionPresent && creatureSpecies && data.evolutionStage && (
+        <View style={styles.spritesRow}>
+          <Surface variant="card" padding="sm" radius="md" style={styles.spriteCard}>
+            <SpeciesBadge
+              species={creatureSpecies}
+              stage={previousStage ?? PRIOR_STAGE[data.evolutionStage]}
+              size={56}
+            />
+            <Typography.Caption tone="secondary" align="center">
+              {previousStage ?? PRIOR_STAGE[data.evolutionStage]}
+            </Typography.Caption>
+          </Surface>
+          <Icon
+            name="chevronRight"
+            size={20}
+            color={colors.accent}
+            style={styles.spritesArrow as any}
+          />
+          <Surface variant="card" padding="sm" radius="md" style={styles.spriteCard}>
+            <SpeciesBadge
+              species={creatureSpecies}
+              stage={data.evolutionStage}
+              size={72}
+            />
+            <Typography.Caption tone="primary" align="center">
+              {data.evolutionStage}
+            </Typography.Caption>
+          </Surface>
+        </View>
+      )}
+
+      {evolutionPresent && (
+        <AnimatedPressable
+          onPress={handleSeeCreature}
+          accessibilityLabel="See your creature"
+          accessibilityRole="button"
+          style={styles.seeCreatureCta}
+        >
+          <Typography.Body tone="onNavy" align="center">
+            See your creature →
+          </Typography.Body>
+        </AnimatedPressable>
+      )}
+    </View>
+  );
+
+  const footer = (
+    <AnimatedPressable
+      onPress={onDismiss}
+      accessibilityLabel="Acknowledge Hero Mail and continue"
+      accessibilityRole="button"
+      style={styles.cta}
+    >
+      <Typography.Body tone="onNavy" align="center">
+        Continue your journey ✨
+      </Typography.Body>
+    </AnimatedPressable>
+  );
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onDismiss}>
-      <Pressable style={styles.backdrop} onPress={onDismiss}>
-        {/* Stop-propagation on the card itself so taps inside don't dismiss */}
-        <Pressable onPress={() => {}}>
-          <Animated.View
-            style={[
-              styles.card,
-              { transform: [{ scale }], opacity },
-            ]}
+      <GradientBackdrop variant="navy" intensity="rich" style={styles.fill}>
+        {/* Navy scrim for parchment legibility */}
+        <View style={styles.scrim} pointerEvents="none" />
+
+        {/* Celebration burst — only when evolution/reward present */}
+        <View
+          pointerEvents="none"
+          importantForAccessibility="no"
+          style={StyleSheet.absoluteFill}
+        >
+          <CelebrationBurst active={burstActive} intensity="rich" />
+        </View>
+
+        <Pressable
+          style={styles.fill}
+          onPress={onDismiss}
+          accessibilityLabel="Dismiss hero mail"
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
-            {/* Ribbon */}
-            <View style={styles.ribbon}>
-              <Ionicons name="mail" size={16} color={colors.primary} />
-              <Text style={styles.ribbonTxt}>Hero Mail</Text>
-            </View>
-
-            <Text style={styles.missionEyebrow}>
-              After: <Text style={styles.missionEyebrowItalic}>{data.missionTitle}</Text>
-            </Text>
-
-            {/* Parent message — parchment style */}
-            <View style={styles.parchment}>
-              <Text style={styles.parchmentQuote}>
-                “{data.parentMessage ?? notification.body}”
-              </Text>
-            </View>
-
-            {/* Awards row */}
-            <View style={styles.awardsRow}>
-              <View style={[styles.awardChip, { borderColor: colors.accent }]}>
-                <Ionicons name="star" size={14} color={colors.accent} />
-                <Text style={styles.awardChipTxt}>+{data.xpAwarded} XP</Text>
-              </View>
-              <View style={[styles.awardChip, { borderColor: colors.accent }]}>
-                <Ionicons name="logo-bitcoin" size={14} color={colors.accent} />
-                <Text style={styles.awardChipTxt}>+{data.coinsAwarded}</Text>
-              </View>
-              <View
-                style={[
-                  styles.awardChip,
-                  { borderColor: tColor, backgroundColor: tColor + '15' },
-                ]}
-              >
-                <View style={[styles.traitDot, { backgroundColor: tColor }]} />
-                <Text style={[styles.awardChipTxt, { color: tColor }]}>
-                  {traitLabel(data.traitCategory)} +1
-                </Text>
-              </View>
-            </View>
-
-            {/* Care item callout */}
-            {data.careItemId && (
-              <View style={[styles.banner, styles.bannerCare]}>
-                <Ionicons name="sparkles" size={16} color={colors.accent} />
-                <Text style={styles.bannerTxt}>
-                  You earned{' '}
-                  <Text style={styles.bannerStrong}>
-                    {data.careItemName.replace(/_/g, ' ')}
-                  </Text>
-                  {' '}— feed your creature!
-                </Text>
-              </View>
-            )}
-
-            {/* Evolution highlight — inline old→new preview + CTA */}
-            {data.evolutionStage && (
-              <View style={styles.evolveBlock}>
-                <View style={styles.evolveHeaderRow}>
-                  <Ionicons name="flash" size={16} color={colors.accent} />
-                  <Text style={styles.evolveHeader}>
-                    Your creature evolved into{' '}
-                    <Text style={styles.bannerStrong}>{data.evolutionStage}!</Text>
-                  </Text>
-                </View>
-
-                {creatureSpecies && (
-                  <Animated.View
-                    style={[
-                      styles.evolveSpritesRow,
-                      { transform: [{ scale: evolvePulse }] },
-                    ]}
-                  >
-                    <View style={styles.evolveSpriteCol}>
-                      <SpeciesBadge
-                        species={creatureSpecies}
-                        stage={previousStage ?? PRIOR_STAGE[data.evolutionStage]}
-                        size={64}
-                      />
-                      <Text style={styles.evolveSpriteLabel}>
-                        {previousStage ?? PRIOR_STAGE[data.evolutionStage]}
-                      </Text>
-                    </View>
-                    <Ionicons
-                      name="arrow-forward"
-                      size={20}
-                      color={colors.accent}
-                      style={{ marginHorizontal: spacing.sm }}
-                    />
-                    <View style={styles.evolveSpriteCol}>
-                      <SpeciesBadge
-                        species={creatureSpecies}
-                        stage={data.evolutionStage}
-                        size={80}
-                      />
-                      <Text style={[styles.evolveSpriteLabel, styles.evolveSpriteLabelNew]}>
-                        {data.evolutionStage}
-                      </Text>
-                    </View>
-                  </Animated.View>
-                )}
-
-                <TouchableOpacity
-                  onPress={handleSeeCreature}
-                  style={styles.evolveCta}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.evolveCtaTxt}>See your creature →</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Reward unlock */}
-            {data.rewardUnlockedId && (
-              <View style={[styles.banner, styles.bannerReward]}>
-                <Text style={styles.bannerTxt}>
-                  🎉 <Text style={styles.bannerStrong}>Reward unlocked!</Text>
-                </Text>
-              </View>
-            )}
-
-            {/* CTA */}
-            <TouchableOpacity style={styles.cta} onPress={onDismiss} activeOpacity={0.9}>
-              <Text style={styles.ctaTxt}>Continue your journey ✨</Text>
-            </TouchableOpacity>
-          </Animated.View>
+            {/* Stop-propagation: taps inside the scroll shouldn't dismiss. */}
+            <Pressable onPress={() => {}}>
+              <Animated.View style={[styles.cardWrap, cardStyle]}>
+                <MailScroll
+                  title={`After: ${data.missionTitle}`}
+                  header={awardsHeader}
+                  body={body}
+                  footer={footer}
+                />
+              </Animated.View>
+            </Pressable>
+          </ScrollView>
         </Pressable>
-      </Pressable>
+      </GradientBackdrop>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 27, 61, 0.65)', // navyDeep alpha
+  fill: { flex: 1 },
+  scrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,26,51,0.65)',
+  },
+  scrollContent: {
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: spacing.lg,
   },
-  card: {
+  cardWrap: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: colors.background, // cream
-    borderRadius: borderRadius.xl,
-    padding: spacing.lg,
-    alignItems: 'stretch',
-    ...shadows.lg,
-  },
-
-  // Ribbon
-  ribbon: {
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: borderRadius.full,
-    backgroundColor: colors.accent,
-    marginTop: -spacing.lg - 4,
-    marginBottom: spacing.md,
-    ...shadows.sm,
-  },
-  ribbonTxt: {
-    fontFamily: fonts.extraBold,
-    fontSize: 13,
-    letterSpacing: 1.2,
-    color: colors.primary,
-  },
-
-  missionEyebrow: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  missionEyebrowItalic: {
-    fontFamily: fonts.semiBold,
-    fontStyle: 'italic',
-    color: colors.primary,
-  },
-
-  parchment: {
-    backgroundColor: '#F4E4C1',
-    borderRadius: borderRadius.lg,
-    borderWidth: 1.5,
-    borderColor: '#D8C396',
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  parchmentQuote: {
-    fontFamily: fonts.regular,
-    fontSize: 17,
-    lineHeight: 26,
-    color: '#5A3F12',
-    fontStyle: 'italic',
-    textAlign: 'center',
   },
 
   awardsRow: {
@@ -358,139 +344,57 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'center',
     gap: spacing.xs,
-    marginBottom: spacing.md,
-  },
-  awardChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: borderRadius.full,
-    borderWidth: 1.5,
-    backgroundColor: colors.surface,
-  },
-  awardChipTxt: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    color: colors.primary,
   },
   traitDot: { width: 8, height: 8, borderRadius: 4 },
 
-  banner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: borderRadius.md,
-    marginBottom: spacing.sm,
-  },
-  bannerCare: {
-    backgroundColor: colors.warningLight,
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  bannerEvolve: {
-    backgroundColor: colors.warningLight,
-    borderWidth: 1.5,
-    borderColor: colors.accent,
-  },
-  bannerEvolveTxt: { fontFamily: fonts.bold },
+  bannerSlot: { marginTop: spacing.sm },
 
-  // Evolution block (banner upgraded with inline old→new sprites + CTA)
-  evolveBlock: {
-    backgroundColor: colors.warningLight,
-    borderRadius: borderRadius.md,
-    borderWidth: 1.5,
-    borderColor: colors.accent,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  evolveHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginBottom: spacing.sm,
-  },
-  evolveHeader: {
-    flex: 1,
-    fontFamily: fonts.bold,
-    fontSize: 13,
-    color: colors.primary,
-    lineHeight: 19,
-  },
-  evolveSpritesRow: {
+  spritesRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+    gap: spacing.sm,
   },
-  evolveSpriteCol: { alignItems: 'center' },
-  evolveSpriteLabel: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    letterSpacing: 1.2,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  evolveSpriteLabelNew: { color: colors.primary },
-  evolveCta: {
+  spriteCard: { alignItems: 'center', gap: 4 },
+  spritesArrow: { marginHorizontal: spacing.xs },
+
+  seeCreatureCta: {
+    marginTop: spacing.md,
+    alignSelf: 'center',
     backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
     borderRadius: borderRadius.md,
-    alignItems: 'center',
-  },
-  evolveCtaTxt: {
-    fontFamily: fonts.extraBold,
-    fontSize: 14,
-    color: colors.accent,
-    letterSpacing: 0.5,
-  },
-  bannerReward: {
-    backgroundColor: '#FFF5DC',
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  bannerTxt: {
-    flex: 1,
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.primary,
-    lineHeight: 19,
-  },
-  bannerStrong: {
-    fontFamily: fonts.extraBold,
-    color: colors.primary,
-    textTransform: 'capitalize',
   },
 
   cta: {
+    alignSelf: 'stretch',
     backgroundColor: colors.accent,
     paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.pill,
     alignItems: 'center',
-    marginTop: spacing.xs,
-    ...shadows.md,
-  },
-  ctaTxt: {
-    fontFamily: fonts.extraBold,
-    fontSize: 16,
-    color: colors.primary,
   },
 
-  fallbackTxt: {
-    fontFamily: fonts.extraBold,
-    fontSize: 18,
-    color: colors.primary,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
+  // Fallback (malformed data) styles
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 27, 61, 0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
   },
-  fallbackBody: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.text,
-    textAlign: 'center',
-    marginBottom: spacing.lg,
+  fallback: {
+    width: '100%',
+    maxWidth: 420,
+  },
+  fallbackCta: {
+    marginTop: spacing.md,
+    alignSelf: 'stretch',
+    backgroundColor: colors.accent,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.pill,
+    alignItems: 'center',
   },
 });

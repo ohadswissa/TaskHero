@@ -1,15 +1,58 @@
-import { View, Text, StyleSheet, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, Animated, Image } from 'react-native';
-import { useState, useRef, useEffect } from 'react';
+/**
+ * Parent login — Polish-B2 rebuild.
+ *
+ * Visual:
+ *  - Inherits navy GradientBackdrop from (auth)/_layout.tsx.
+ *  - Animated logo crest (crown icon + Fraunces wordmark) gently floats in.
+ *  - Glass parchment card (Surface variant="glass") with Display heading,
+ *    Inter inputs, amber pill CTA, and inline error Banner.
+ *  - Secondary CTAs: "I'm a Hero (child)" + "Create an account".
+ *
+ * Functional behavior preserved — login() → router.replace('/').
+ */
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  Animated as RNAnimated,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { Link, router } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { useAuthStore } from '@/stores/authStore';
-import { Input } from '@/components/common/Input';
-import { Button } from '@/components/common/Button';
-import { Gradient } from '@/components/common/Gradient';
-import { colors, spacing, gradients, borderRadius, fonts } from '@/theme';
-import { Ionicons } from '@expo/vector-icons';
+import {
+  AnimatedPressable,
+  Banner,
+  Body,
+  Caption,
+  Display,
+  Icon,
+  Surface,
+  Typography,
+} from '@/components/ui';
+import {
+  borderRadius,
+  colors,
+  durations,
+  spacing,
+  typographyTokens,
+} from '@/theme';
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -23,18 +66,38 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const { login } = useAuthStore();
 
-  // Animations
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
-  const logoScale = useRef(new Animated.Value(0.5)).current;
+  // Logo float-in animation
+  const logoOpacity = useSharedValue(0);
+  const logoTranslate = useSharedValue(-12);
+  const cardOpacity = useSharedValue(0);
+  const cardTranslate = useSharedValue(24);
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.spring(logoScale, { toValue: 1, friction: 4, tension: 50, useNativeDriver: true }),
-      Animated.timing(fadeAnim, { toValue: 1, duration: 800, delay: 300, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 600, delay: 400, useNativeDriver: true }),
-    ]).start();
-  }, []);
+    logoOpacity.value = withTiming(1, { duration: durations.slow });
+    logoTranslate.value = withTiming(0, { duration: durations.slow, easing: Easing.out(Easing.cubic) });
+    // gentle continuous bob after the entry
+    setTimeout(() => {
+      logoTranslate.value = withRepeat(
+        withSequence(
+          withTiming(-4, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
+          withTiming(0, { duration: 1800, easing: Easing.inOut(Easing.sin) }),
+        ),
+        -1,
+        false,
+      );
+    }, durations.slow);
+    cardOpacity.value = withDelay(durations.base, withTiming(1, { duration: durations.slow }));
+    cardTranslate.value = withDelay(durations.base, withTiming(0, { duration: durations.slow, easing: Easing.out(Easing.cubic) }));
+  }, [logoOpacity, logoTranslate, cardOpacity, cardTranslate]);
+
+  const logoStyle = useAnimatedStyle(() => ({
+    opacity: logoOpacity.value,
+    transform: [{ translateY: logoTranslate.value }],
+  }));
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value,
+    transform: [{ translateY: cardTranslate.value }],
+  }));
 
   const { control, handleSubmit, formState: { errors } } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
@@ -56,325 +119,286 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-        {/* Gradient hero with floating particles effect */}
-        <View style={styles.heroWrapper}>
-          <Gradient
-            colors={['#4F46E5', '#7C3AED', '#8B5CF6']}
-            style={styles.hero}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            {/* Perspective patterns */}
-            <View style={styles.heroBgPatterns}>
-              <View style={[styles.heroFloatingShape, { top: -20, left: -20, width: 220, height: 220, borderRadius: 110, backgroundColor: 'rgba(255,255,255,0.08)' }]} />
-              <View style={[styles.heroFloatingShape, { bottom: 40, right: -40, width: 280, height: 280, borderRadius: 140, backgroundColor: 'rgba(255,255,255,0.05)' }]} />
-              <View style={[styles.heroFloatingShape, { top: 100, right: 20, width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.1)' }]} />
-            </View>
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Logo crest */}
+          <Animated.View style={[styles.crest, logoStyle]}>
+            <LogoMark />
+          </Animated.View>
 
-            <View style={styles.heroMainContent}>
-              <Animated.View style={[styles.logoStage, { transform: [{ scale: logoScale }] }]}>
-                {/* Large transparent logo with subtle glow behind it for depth */}
-                <View style={styles.logoGlowBehind} />
-                <Image
-                  source={require('../../assets/taskhero.png')}
-                  style={styles.logoFull}
-                  resizeMode="contain"
-                />
-              </Animated.View>
+          {/* Glass card */}
+          <Animated.View style={[styles.cardWrap, cardStyle]}>
+            <Surface variant="glass" radius="xl" padding="lg" shadow="navyGlow">
+              <Display tone="primary" align="center" style={styles.title}>
+                Welcome back
+              </Display>
+              <Body tone="secondary" align="center" style={styles.tagline}>
+                Continue your hero&apos;s journey.
+              </Body>
 
-            </View>
-          </Gradient>
-          {/* Professional transition curve */}
-          <View style={styles.heroCurveMask} />
-        </View>
-
-        {/* White card form */}
-        <Animated.View style={[styles.card, { opacity: fadeAnim }]}>
-          <Text style={styles.cardTitle}>Welcome Back 👋</Text>
-          <Text style={styles.cardSubtitle}>Sign in to manage your family's adventures</Text>
-
-          {error && (
-            <View style={styles.errorContainer}>
-              <Ionicons name="alert-circle" size={18} color={colors.error} />
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          )}
-
-          <Controller
-            control={control}
-            name="email"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <Input
-                label="Email"
-                placeholder="your@email.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={value}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                error={errors.email?.message}
-              />
-            )}
-          />
-
-          <Controller
-            control={control}
-            name="password"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <Input
-                label="Password"
-                placeholder="Your password"
-                secureTextEntry
-                value={value}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                error={errors.password?.message}
-              />
-            )}
-          />
-
-          <Button
-            title="Sign In"
-            onPress={handleSubmit(onSubmit)}
-            loading={isLoading}
-            style={styles.button}
-          />
-
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <Link href="/(auth)/child-login" asChild>
-            <TouchableOpacity style={styles.childLoginButton}>
-              <Gradient colors={['#F59E0B', '#EF4444']} style={styles.childLoginGradient} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-                <Text style={styles.childLoginEmoji}>🦸</Text>
-                <Text style={styles.childLoginText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>I'm a Hero (Kid Login)</Text>
-                <View style={styles.childLoginIconBox}>
-                  <Ionicons name="arrow-forward" size={14} color={colors.white} />
+              {error ? (
+                <View style={styles.bannerWrap}>
+                  <Banner tone="error" message={error} />
                 </View>
-              </Gradient>
-            </TouchableOpacity>
-          </Link>
+              ) : null}
 
-          <View style={styles.footer}>
+              <Controller
+                control={control}
+                name="email"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <ThemedInput
+                    label="Email"
+                    placeholder="your@email.com"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoComplete="email"
+                    value={value}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    error={errors.email?.message}
+                  />
+                )}
+              />
+
+              <Controller
+                control={control}
+                name="password"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <ThemedInput
+                    label="Password"
+                    placeholder="••••••••"
+                    secureTextEntry
+                    autoComplete="password"
+                    value={value}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    error={errors.password?.message}
+                  />
+                )}
+              />
+
+              <AnimatedPressable
+                onPress={handleSubmit(onSubmit)}
+                disabled={isLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Sign in"
+                style={[styles.cta, isLoading ? { opacity: 0.6 } : null] as any}
+              >
+                <Typography.Heading level={2} tone="primary" style={styles.ctaLabel}>
+                  {isLoading ? 'Signing in…' : 'Sign in'}
+                </Typography.Heading>
+                {!isLoading && <Icon name="chevronRight" size={20} color={colors.navyDeep} />}
+              </AnimatedPressable>
+
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Caption tone="secondary" style={styles.dividerLabel}>or</Caption>
+                <View style={styles.dividerLine} />
+              </View>
+
+              <Link href="/(auth)/child-login" asChild>
+                <AnimatedPressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Child login"
+                  style={styles.secondaryCta}
+                >
+                  <Icon name="sparkle" size={18} color={colors.amberDeep} />
+                  <Typography.Body emphasis tone="primary" style={styles.secondaryLabel}>
+                    I&apos;m a Hero (child)
+                  </Typography.Body>
+                  <Icon name="chevronRight" size={18} color={colors.primary} />
+                </AnimatedPressable>
+              </Link>
+            </Surface>
+
             <Link href="/(auth)/register" asChild>
-              <TouchableOpacity>
-                <Text style={styles.link}>Don't have an account? <Text style={styles.linkBold}>Create Family</Text></Text>
-              </TouchableOpacity>
+              <AnimatedPressable
+                style={styles.footerLink}
+                accessibilityRole="button"
+                accessibilityLabel="Create a family account"
+              >
+                <Typography.Body tone="onNavy" align="center">
+                  New family?{' '}
+                  <Typography.Body emphasis tone="accent">Create an account →</Typography.Body>
+                </Typography.Body>
+              </AnimatedPressable>
             </Link>
-          </View>
-        </Animated.View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          </Animated.View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+// ----------------------------------------------------------------------
+// LogoMark — TaskHero brand image with a gentle fade-in via RN Animated.
+// ----------------------------------------------------------------------
+function LogoMark() {
+  const opacity = useRef(new RNAnimated.Value(0)).current;
+  const scale = useRef(new RNAnimated.Value(0.94)).current;
+  useEffect(() => {
+    RNAnimated.parallel([
+      RNAnimated.timing(opacity, { toValue: 1, duration: 600, useNativeDriver: true }),
+      RNAnimated.spring(scale, { toValue: 1, friction: 6, tension: 60, useNativeDriver: true }),
+    ]).start();
+  }, [opacity, scale]);
+  return (
+    <RNAnimated.Image
+      source={require('../../assets/taskhero.png')}
+      resizeMode="contain"
+      style={[styles.logoImage, { opacity, transform: [{ scale }] }]}
+      accessibilityLabel="TaskHero logo"
+    />
+  );
+}
+
+// ----------------------------------------------------------------------
+// ThemedInput — local input bound to typographyTokens. Lives here for
+// now; if a third screen needs it we'll promote to components/ui/Input.
+// ----------------------------------------------------------------------
+function ThemedInput({
+  label,
+  error,
+  ...rest
+}: React.ComponentProps<typeof TextInput> & { label: string; error?: string }) {
+  return (
+    <View style={styles.field}>
+      <Caption tone="secondary" emphasis style={styles.fieldLabel}>{label}</Caption>
+      <TextInput
+        {...rest}
+        placeholderTextColor={colors.textTokens.tertiary}
+        style={[
+          styles.input,
+          error ? styles.inputError : null,
+        ]}
+      />
+      {error ? (
+        <Caption tone="error" style={styles.fieldError}>{error}</Caption>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
+  safe: { flex: 1, backgroundColor: 'transparent' },
+  flex: { flex: 1 },
   scroll: {
     flexGrow: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: 0,
+    paddingBottom: spacing.md,
   },
-  heroWrapper: {
-    height: 480,
-    position: 'relative',
-  },
-  hero: {
-    flex: 1,
-    paddingTop: 80,
+
+  crest: {
     alignItems: 'center',
-    overflow: 'hidden',
+    marginBottom: -spacing.lg,
+    marginTop: -spacing.md,
   },
-  heroBgPatterns: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: 'hidden',
-  },
-  heroFloatingShape: {
-    position: 'absolute',
-  },
-  heroMainContent: {
-    alignItems: 'center',
-    zIndex: 10,
-    width: '100%',
-  },
-  logoStage: {
+  crestIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(244, 184, 96, 0.16)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(244, 184, 96, 0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: spacing.sm,
   },
-  logoFull: {
-    width: 380,
-    height: 380,
-    zIndex: 2,
+  logoImage: {
+    width: 300,
+    height: 300,
   },
-  logoGlowBehind: {
-    position: 'absolute',
-    width: 200,
-    height: 200,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    borderRadius: 100,
-    filter: 'blur(40px)', // Note: standard RN doesn't support 'filter', but we can use shadow hacks if needed
-    opacity: 0.3,
-    zIndex: 1,
+  wordmark: {
+    fontSize: 36,
+    letterSpacing: -0.5,
   },
-  textStage: {
-    alignItems: 'center',
-    marginTop: 20,
-    paddingHorizontal: 20,
-    width: '100%',
+  wordmarkSub: { opacity: 0.75, marginTop: 2 },
+
+  cardWrap: { width: '100%' },
+  title: { marginTop: spacing.xs },
+  tagline: { marginTop: 4, marginBottom: spacing.md },
+
+  bannerWrap: { marginBottom: spacing.md },
+
+  field: { marginBottom: spacing.md },
+  fieldLabel: {
+    letterSpacing: 1.2,
+    marginBottom: 6,
+    textTransform: 'uppercase',
   },
-  brandName: {
-    fontSize: 48,
-    fontFamily: fonts.extraBold,
-    color: '#FFF',
-    letterSpacing: -1,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 1, height: 2 },
-    textShadowRadius: 4,
-  },
-  taglineRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  taglineText: {
-    fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.9)',
-    fontFamily: fonts.regular,
-  },
-  featurePills: {
-    flexDirection: 'row',
-    marginTop: 25,
-    gap: 10,
-  },
-  featurePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  featureEmoji: {
-    fontSize: 14,
-  },
-  featureText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontFamily: fonts.bold,
-  },
-  heroCurveMask: {
-    position: 'absolute',
-    bottom: -1,
-    width: '100%',
-    height: 60,
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 60,
-    borderTopRightRadius: 60,
-  },
-  card: {
-    flex: 1,
-    backgroundColor: '#FFF',
-    paddingHorizontal: 30,
-    paddingBottom: 40,
-  },
-  cardTitle: {
-    fontFamily: fonts.extraBold,
-    fontSize: 28,
-    color: colors.text,
-    marginBottom: spacing.xs,
-  },
-  cardSubtitle: {
-    fontFamily: fonts.regular,
-    fontSize: 15,
-    color: colors.textSecondary,
-    marginBottom: spacing.xl,
-  },
-  errorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.errorLight,
-    padding: spacing.md,
+  input: {
+    backgroundColor: 'rgba(255,255,255,0.85)',
     borderRadius: borderRadius.lg,
-    marginBottom: spacing.md,
-    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 14,
+    ...typographyTokens.body,
+    fontSize: 15,
+    color: colors.primary,
+    borderWidth: 1,
+    borderColor: 'rgba(27, 42, 78, 0.12)',
   },
-  errorText: {
-    color: colors.error,
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    flex: 1,
+  inputError: {
+    borderColor: colors.error,
+    backgroundColor: '#FDEFEE',
   },
-  button: {
-    marginTop: spacing.md,
-  },
-  dividerRow: {
+  fieldError: { marginTop: 4 },
+
+  cta: {
+    marginTop: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: spacing.xl,
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: colors.amberDeep,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.pill,
+  },
+  ctaLabel: {
+    fontSize: 17,
+    color: colors.navyDeep,
+  },
+
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.md,
+    gap: spacing.sm,
   },
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: colors.border,
+    backgroundColor: 'rgba(27, 42, 78, 0.12)',
   },
-  dividerText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: colors.textTertiary,
-    marginHorizontal: spacing.md,
+  dividerLabel: {
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
   },
-  childLoginButton: {
-    borderRadius: borderRadius.xl,
-    overflow: 'hidden',
-  },
-  childLoginGradient: {
+
+  secondaryCta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: spacing.sm,
-    gap: spacing.xs,
+    gap: spacing.sm,
+    backgroundColor: colors.creamSoft,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.pill,
+    borderWidth: 1,
+    borderColor: colors.amberSoft,
   },
-  childLoginIconBox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  childLoginEmoji: {
-    fontSize: 20,
-  },
-  childLoginText: {
-    fontFamily: fonts.bold,
-    fontSize: 15,
-    color: colors.white,
-    flexShrink: 1,
-  },
-  footer: {
-    alignItems: 'center',
+  secondaryLabel: { flex: 0 },
+
+  footerLink: {
     marginTop: spacing.xl,
-  },
-  link: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  linkBold: {
-    fontFamily: fonts.bold,
-    color: colors.primary,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
   },
 });

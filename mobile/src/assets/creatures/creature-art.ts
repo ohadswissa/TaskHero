@@ -1,16 +1,10 @@
 /**
- * Creature art asset map.
+ * Compatibility shim — Polish-A removed the PNG-based creature art map
+ * in favor of programmatic <Creature/> SVGs. This file remains so any
+ * forgotten imports of `getCreatureArt` / `creatureArt` / `getEggArt`
+ * don't crash; they return the brand-mark placeholder + log a warning.
  *
- * The visual demo needs 4 stages (EGG / BABY / ADOLESCENT / ADULT) × 3
- * species (FOREST_PUP / SKY_SPRITE / STONE_CUB) = 12 sprite slots. Real
- * artwork lands in M7. Until then every slot resolves to the existing
- * brand mark at mobile/assets/taskhero.png so the structure is wired but
- * the screens visually fall back to the SpeciesBadge gradient halo around
- * the placeholder.
- *
- * To swap in real art later, drop the PNGs into mobile/assets/creatures/
- * and replace the `require(...)` calls below — no other file needs to
- * change.
+ * DELETE in a future cleanup once no call sites remain.
  */
 import type { ImageSourcePropType } from 'react-native';
 import type { CreatureSpecies, EvolutionStage } from '@/api/creatures.api';
@@ -18,35 +12,31 @@ import type { CreatureSpecies, EvolutionStage } from '@/api/creatures.api';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const placeholder: ImageSourcePropType = require('../../../assets/taskhero.png');
 
+let warned = false;
+function warnDeprecated(fn: string) {
+  if (warned) return;
+  warned = true;
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[creature-art] ${fn} is deprecated — use <Creature/> from @/components/creature/Creature instead.`,
+  );
+}
+
 export const creatureArt: Record<CreatureSpecies, Record<EvolutionStage, ImageSourcePropType>> = {
-  FOREST_PUP: {
-    EGG: placeholder,
-    BABY: placeholder,
-    ADOLESCENT: placeholder,
-    ADULT: placeholder,
-  },
-  SKY_SPRITE: {
-    EGG: placeholder,
-    BABY: placeholder,
-    ADOLESCENT: placeholder,
-    ADULT: placeholder,
-  },
-  STONE_CUB: {
-    EGG: placeholder,
-    BABY: placeholder,
-    ADOLESCENT: placeholder,
-    ADULT: placeholder,
-  },
+  FOREST_PUP: { EGG: placeholder, BABY: placeholder, ADOLESCENT: placeholder, ADULT: placeholder },
+  SKY_SPRITE: { EGG: placeholder, BABY: placeholder, ADOLESCENT: placeholder, ADULT: placeholder },
+  STONE_CUB: { EGG: placeholder, BABY: placeholder, ADOLESCENT: placeholder, ADULT: placeholder },
 };
 
 export function getCreatureArt(
-  species: CreatureSpecies,
-  stage: EvolutionStage,
+  _species: CreatureSpecies,
+  _stage: EvolutionStage,
 ): ImageSourcePropType {
-  return creatureArt[species]?.[stage] ?? placeholder;
+  warnDeprecated('getCreatureArt');
+  return placeholder;
 }
 
-/** Egg art is species-agnostic in the demo but the API takes species for forward compat. */
-export function getEggArt(species: CreatureSpecies = 'FOREST_PUP'): ImageSourcePropType {
-  return creatureArt[species].EGG;
+export function getEggArt(_species: CreatureSpecies = 'FOREST_PUP'): ImageSourcePropType {
+  warnDeprecated('getEggArt');
+  return placeholder;
 }

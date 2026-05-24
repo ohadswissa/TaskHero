@@ -44,6 +44,19 @@ export interface Hero {
   currentStreak: number;
 }
 
+/**
+ * Slim creature payload included with `GET /children` (Polish-B4). Only
+ * the fields the parent roster needs to render — the full creature DTO
+ * remains available via `creaturesApi.getMine`.
+ */
+export interface ChildCreatureSummary {
+  id: string;
+  species: CreatureSpecies;
+  stage: EvolutionStage;
+  happiness: number;
+  name: string;
+}
+
 export interface ChildProfile {
   id: string;
   userId: string;
@@ -52,6 +65,8 @@ export interface ChildProfile {
   dateOfBirth: string | null;
   hero?: Hero | null;
   user?: { id: string; isActive: boolean };
+  /** Polish-B4: present when the child has hatched a creature. */
+  creature?: ChildCreatureSummary | null;
   createdAt: string;
   updatedAt: string;
 }

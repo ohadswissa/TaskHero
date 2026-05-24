@@ -1,35 +1,36 @@
 /**
- * EvolutionOverlay — M7a.
+ * EvolutionOverlay — M7a (Polish-B3 visual upgrade).
  *
  * Fullscreen celebratory animation that plays on the Creature Hub when the
- * child's creature stage transitions (BABY → ADOLESCENT, ADOLESCENT → ADULT,
- * or EGG → BABY for completeness). Sequence (~1.8s total):
+ * child's creature stage transitions. The shrink → burst → expand sequence
+ * and ~1.8s timing are PRESERVED exactly. Polish-B3 swaps the visual chrome:
  *
- *   0-600ms   Old sprite shrinks scale 1.0 → 0.3, white tint fades 0 → 0.9
- *   500-1000ms Burst — 8 ✨ particles emanate outward from center
- *   900-1500ms New sprite fades in scale 0.5 → 1.1 → 1.0 (overshoot bounce)
- *   1300-1800ms Caption card slides up + scales 0 → 1
- *
- * Tap anywhere to skip the rest of the sequence. After completion the
- * overlay auto-dismisses via onComplete.
- *
- * Visual direction (plans/demo-flow.md §7): warm fantasy, navy + amber.
- * The white tint flashes amber-tinted, the caption card uses cream +
- * amber border.
+ *   - Backdrop is `GradientBackdrop variant="magic" intensity="rich"` with
+ *     a translucent navy overlay on top so the magic gradient glows behind
+ *     a legible scrim.
+ *   - The inline ✨ Animated.Text particles are replaced by a Reanimated
+ *     `<CelebrationBurst />` activated only during the burst phase.
+ *   - The caption View+Text is replaced by `<Surface variant="glass">` with
+ *     `<Typography.Display tone="onNavy" />`.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
   Pressable,
   StyleSheet,
-  Text,
   View,
   Dimensions,
 } from 'react-native';
 import { SpeciesBadge } from './SpeciesBadge';
 import type { CreatureSpecies, EvolutionStage } from '@/api/creatures.api';
-import { borderRadius, colors, fonts, shadows, spacing } from '@/theme';
+import { colors, spacing } from '@/theme';
+import {
+  CelebrationBurst,
+  GradientBackdrop,
+  Surface,
+  Typography,
+} from '@/components/ui';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -40,8 +41,6 @@ interface EvolutionOverlayProps {
   creatureName: string;
   onComplete: () => void;
 }
-
-const PARTICLE_COUNT = 8;
 
 function stageLabel(stage: EvolutionStage): string {
   switch (stage) {
@@ -66,8 +65,9 @@ export function EvolutionOverlay({
   // 1. Old sprite shrink + tint
   const oldScale = useRef(new Animated.Value(1)).current;
   const tintOpacity = useRef(new Animated.Value(0)).current;
-  // 2. Burst
+  // 2. Burst (also drives CelebrationBurst on/off via state)
   const burst = useRef(new Animated.Value(0)).current;
+  const [burstActive, setBurstActive] = useState(false);
   // 3. New sprite reveal
   const newScale = useRef(new Animated.Value(0)).current;
   const newOpacity = useRef(new Animated.Value(0)).current;
@@ -80,6 +80,7 @@ export function EvolutionOverlay({
   const finish = () => {
     if (completedRef.current) return;
     completedRef.current = true;
+    setBurstActive(false);
     Animated.timing(backdrop, {
       toValue: 0,
       duration: 250,
@@ -109,7 +110,8 @@ export function EvolutionOverlay({
           useNativeDriver: true,
         }),
       ]),
-      // Phase 2: burst
+      // Phase 2: burst — drive the legacy `burst` value AND flip the
+      // CelebrationBurst on for the duration of this phase.
       Animated.timing(burst, {
         toValue: 1,
         duration: 500,
@@ -152,6 +154,15 @@ export function EvolutionOverlay({
       // Linger
       Animated.delay(700),
     ]).start(() => finish());
+
+    // Burst window: arm CelebrationBurst when phase-1 completes, disarm when
+    // phase-3 (expand) begins. Phase-1 = 600ms, burst phase = next 500ms.
+    const armBurst = setTimeout(() => setBurstActive(true), 600);
+    const disarmBurst = setTimeout(() => setBurstActive(false), 600 + 500);
+    return () => {
+      clearTimeout(armBurst);
+      clearTimeout(disarmBurst);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -160,119 +171,110 @@ export function EvolutionOverlay({
       onPress={finish}
       style={StyleSheet.absoluteFill}
       pointerEvents="auto"
+      accessibilityLabel="Evolution celebration. Tap to continue."
+      accessibilityRole="button"
     >
       <Animated.View
-        style={[
-          styles.root,
-          { opacity: backdrop },
-        ]}
+        style={[StyleSheet.absoluteFillObject, { opacity: backdrop }]}
+        importantForAccessibility="no"
       >
-        {/* Sprite stage */}
-        <View style={styles.spriteArea}>
-          {/* Old sprite shrinking */}
+        {/* Magic gradient underlay */}
+        <GradientBackdrop variant="magic" intensity="rich" style={styles.fill}>
+          {/* Navy scrim for legibility */}
+          <View style={styles.scrim} pointerEvents="none" />
+
+          {/* Sprite stage */}
+          <View style={styles.spriteArea} importantForAccessibility="no">
+            {/* Old sprite shrinking */}
+            <Animated.View
+              style={[
+                styles.spriteCenter,
+                {
+                  opacity: newOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, 0],
+                  }),
+                  transform: [{ scale: oldScale }],
+                },
+              ]}
+              pointerEvents="none"
+              importantForAccessibility="no"
+            >
+              <SpeciesBadge species={species} stage={fromStage} size={180} />
+            </Animated.View>
+
+            {/* White/amber flash overlay */}
+            <Animated.View
+              pointerEvents="none"
+              importantForAccessibility="no"
+              style={[styles.flash, { opacity: tintOpacity }]}
+            />
+
+            {/* Reanimated burst — only active during burst phase */}
+            <View
+              pointerEvents="none"
+              importantForAccessibility="no"
+              style={StyleSheet.absoluteFill}
+            >
+              <CelebrationBurst
+                active={burstActive}
+                intensity="normal"
+                spread={200}
+              />
+            </View>
+
+            {/* New sprite rising in */}
+            <Animated.View
+              style={[
+                styles.spriteCenter,
+                {
+                  opacity: newOpacity,
+                  transform: [{ scale: newScale }],
+                },
+              ]}
+              pointerEvents="none"
+              importantForAccessibility="no"
+            >
+              <SpeciesBadge species={species} stage={toStage} size={200} />
+            </Animated.View>
+          </View>
+
+          {/* Caption — glass Surface + Display typography */}
           <Animated.View
             style={[
-              styles.spriteCenter,
-              {
-                opacity: newOpacity.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 0],
-                }),
-                transform: [{ scale: oldScale }],
-              },
+              styles.captionWrap,
+              { transform: [{ scale: captionScale }] },
             ]}
             pointerEvents="none"
           >
-            <SpeciesBadge species={species} stage={fromStage} size={180} />
+            <Surface variant="glass" padding="md" radius="lg">
+              <Typography.Eyebrow tone="onNavy" align="center">
+                EVOLUTION
+              </Typography.Eyebrow>
+              <Typography.Display tone="onNavy" align="center">
+                {creatureName} evolved into {stageLabel(toStage)}!
+              </Typography.Display>
+            </Surface>
           </Animated.View>
 
-          {/* White/amber flash overlay */}
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.flash,
-              { opacity: tintOpacity },
-            ]}
-          />
-
-          {/* Burst particles */}
-          {Array.from({ length: PARTICLE_COUNT }).map((_, i) => {
-            const angle = (i / PARTICLE_COUNT) * Math.PI * 2;
-            const dist = 140;
-            const tx = burst.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, Math.cos(angle) * dist],
-            });
-            const ty = burst.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, Math.sin(angle) * dist],
-            });
-            const opacity = burst.interpolate({
-              inputRange: [0, 0.2, 1],
-              outputRange: [0, 1, 0],
-            });
-            const scale = burst.interpolate({
-              inputRange: [0, 0.5, 1],
-              outputRange: [0.5, 1.4, 0.6],
-            });
-            return (
-              <Animated.Text
-                key={i}
-                pointerEvents="none"
-                style={[
-                  styles.particle,
-                  {
-                    opacity,
-                    transform: [{ translateX: tx }, { translateY: ty }, { scale }],
-                  },
-                ]}
-              >
-                ✨
-              </Animated.Text>
-            );
-          })}
-
-          {/* New sprite rising in */}
-          <Animated.View
-            style={[
-              styles.spriteCenter,
-              {
-                opacity: newOpacity,
-                transform: [{ scale: newScale }],
-              },
-            ]}
-            pointerEvents="none"
+          <Typography.Caption
+            tone="onNavy"
+            align="center"
+            style={styles.tapHint}
           >
-            <SpeciesBadge species={species} stage={toStage} size={200} />
-          </Animated.View>
-        </View>
-
-        {/* Caption */}
-        <Animated.View
-          style={[
-            styles.caption,
-            { transform: [{ scale: captionScale }] },
-          ]}
-          pointerEvents="none"
-        >
-          <Text style={styles.captionEyebrow}>EVOLUTION</Text>
-          <Text style={styles.captionTitle}>
-            {creatureName} evolved into {stageLabel(toStage)}!
-          </Text>
-        </Animated.View>
-
-        <Text style={styles.tapHint}>tap to continue</Text>
+            tap to continue
+          </Typography.Caption>
+        </GradientBackdrop>
       </Animated.View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
+  fill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  scrim: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 27, 61, 0.85)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(15,26,51,0.55)',
   },
   spriteArea: {
     width: SCREEN_W,
@@ -292,42 +294,15 @@ const styles = StyleSheet.create({
     borderRadius: 130,
     backgroundColor: colors.accent,
   },
-  particle: {
-    position: 'absolute',
-    fontSize: 26,
-    color: colors.accent,
-  },
-  caption: {
+  captionWrap: {
     marginTop: spacing.xl,
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
     maxWidth: SCREEN_W - spacing.xl * 2,
-    ...shadows.lg,
-  },
-  captionEyebrow: {
-    fontFamily: fonts.extraBold,
-    fontSize: 11,
-    letterSpacing: 3,
-    color: colors.primary,
-    opacity: 0.7,
-    marginBottom: 4,
-  },
-  captionTitle: {
-    fontFamily: fonts.extraBold,
-    fontSize: 18,
-    color: colors.primary,
-    textAlign: 'center',
   },
   tapHint: {
     position: 'absolute',
     bottom: spacing.xl,
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: colors.white,
-    opacity: 0.6,
+    alignSelf: 'center',
+    opacity: 0.7,
     letterSpacing: 1.5,
   },
 });

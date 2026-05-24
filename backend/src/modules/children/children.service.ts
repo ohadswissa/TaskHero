@@ -77,6 +77,18 @@ export class ChildrenService {
         user: {
           select: { id: true, isActive: true },
         },
+        // Polish-B4: include creature so the parent roster (and dashboard
+        // RosterRow happiness orb) can render without a second round-trip.
+        // Hero already supplies xp/coins; we don't need to duplicate them.
+        creature: {
+          select: {
+            id: true,
+            species: true,
+            stage: true,
+            happiness: true,
+            name: true,
+          },
+        },
       },
     });
 

@@ -25,6 +25,19 @@ export class ApprovalsController {
     return this.approvalsService.listPending(userId, familyId);
   }
 
+  @Get('stats/today')
+  @ApiOperation({
+    summary:
+      "Today's verification stats (parent only). `approvedToday` counts approvals decided since 00:00 in the family timezone.",
+  })
+  @ApiResponse({ status: 200, description: 'Today stats' })
+  async todayStats(
+    @CurrentUser('userId') userId: string,
+    @CurrentUser('familyId') familyId: string,
+  ) {
+    return this.approvalsService.todayStats(userId, familyId);
+  }
+
   @Post(':assignmentId/verify')
   @ApiOperation({
     summary:

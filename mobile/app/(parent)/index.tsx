@@ -1,44 +1,95 @@
-import React, { useState } from 'react';
+/**
+ * Parent dashboard — Polish-B3 rebuild.
+ *
+ * Composed entirely of design-system primitives:
+ *   SectionHeader · Chip · Surface · TraitRadar · RosterRow ·
+ *   StatCard · AnimatedPressable · Icon · Banner · GradientBackdrop.
+ *
+ * Data flow preserved 1:1 with the prior screen:
+ *   familiesApi.getMyFamily · childrenApi.listChildren ·
+ *   approvalsApi.listPending · rewardsApi.listFamilyRewards ·
+ *   progressionApi.traitSummary per child (useQueries).
+ */
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
+  ActivityIndicator,
+  Dimensions,
+  FlatList,
   RefreshControl,
-  Platform,
+  ScrollView,
+  StyleSheet,
+  View,
+  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/stores/authStore';
-import { Card } from '@/components/common';
-import { childrenApi } from '@/api/children.api';
-import { familiesApi } from '@/api/families.api';
-import { approvalsApi } from '@/api/approvals.api';
-import { progressionApi } from '@/api/progression.api';
-import { queryKeys } from '@/api/queryKeys';
+import {
+  approvalsApi,
+  childrenApi,
+  familiesApi,
+  progressionApi,
+  queryKeys,
+  rewardsApi,
+} from '@/api';
 import type { ChildProfile } from '@/api/types';
 import type { TraitSummary } from '@/api/progression.api';
-import { colors, spacing, borderRadius, fonts, shadows } from '@/theme';
 import { TraitRadar } from '@/components/progression/TraitRadar';
+import {
+  AnimatedPressable,
+  Banner,
+  Chip,
+  GradientBackdrop,
+  Icon,
+  RosterRow,
+  SectionHeader,
+  StatCard,
+  Surface,
+  Typography,
+  useToast,
+  type IconName,
+} from '@/components/ui';
+import { FLOATING_TAB_BAR_SCREEN_PADDING } from '@/components/ui';
+import { colors, spacing, traitColor } from '@/theme';
 
-export default function ParentDashboard() {
+const CARD_WIDTH = 280;
+const CARD_GAP = spacing.md;
+
+export default function ParentDashboardScreen() {
   const { user } = useAuthStore();
   const displayName = user?.displayName || 'Parent';
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
-  const [copied, setCopied] = useState(false);
 
-  const familyQ = useQuery({ queryKey: ['family', 'me'], queryFn: familiesApi.getMyFamily });
-  const childrenQ = useQuery({ queryKey: ['children'], queryFn: childrenApi.listChildren });
+  // ---- Queries (data wiring preserved from previous implementation) ----
+  const familyQ = useQuery({
+    queryKey: ['family', 'me'] as const,
+    queryFn: familiesApi.getMyFamily,
+  });
+  const childrenQ = useQuery({
+    queryKey: [...queryKeys.children.list],
+    queryFn: childrenApi.listChildren,
+  });
   const pendingQ = useQuery({
     queryKey: [...queryKeys.approvals.pending],
     queryFn: approvalsApi.listPending,
   });
+  const rewardsQ = useQuery({
+    queryKey: [...queryKeys.rewards.family],
+    queryFn: rewardsApi.listFamilyRewards,
+  });
+  const todayStatsQ = useQuery({
+    queryKey: [...queryKeys.approvals.todayStats],
+    queryFn: approvalsApi.getTodayStats,
+    staleTime: 30_000,
+  });
 
-  const childIds = (childrenQ.data ?? []).map((c) => c.id);
+  const children: ChildProfile[] = childrenQ.data ?? [];
+  const childIds = children.map((c) => c.id);
+
   const traitQueries = useQueries({
     queries: childIds.map((cid) => ({
       queryKey: queryKeys.progression.summary(cid),
@@ -46,445 +97,396 @@ export default function ParentDashboard() {
       staleTime: 1000 * 60,
     })),
   });
-  const traitByChild: Record<string, TraitSummary | undefined> = {};
-  childIds.forEach((cid, i) => {
-    traitByChild[cid] = traitQueries[i]?.data;
-  });
+  const traitByChild = useMemo(() => {
+    const map: Record<string, TraitSummary | undefined> = {};
+    childIds.forEach((cid, i) => {
+      map[cid] = traitQueries[i]?.data;
+    });
+    return map;
+  }, [childIds, traitQueries]);
 
-  const onRefresh = async () => {
+  // ---- Pull to refresh ----
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['family', 'me'] }),
-      queryClient.invalidateQueries({ queryKey: ['children'] }),
-      queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.pending] }),
-      ...childIds.map((cid) =>
-        queryClient.invalidateQueries({ queryKey: queryKeys.progression.summary(cid) }),
-      ),
-    ]);
-    setRefreshing(false);
-  };
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['family', 'me'] }),
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.children.list] }),
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.pending] }),
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.todayStats] }),
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.rewards.family] }),
+        ...childIds.map((cid) =>
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.progression.summary(cid),
+          }),
+        ),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [queryClient, childIds]);
 
-  const copyCode = async () => {
+  // ---- Copy invite code (Polish-B4: real clipboard write via expo-clipboard) ----
+  const copyInviteCode = useCallback(async () => {
     const code = familyQ.data?.inviteCode;
     if (!code) return;
     try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(code);
-      } else {
-        // expo-clipboard not installed; soft fallback — code is already visible.
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await Clipboard.setStringAsync(code);
+      toast.show('Invite code copied', { tone: 'success' });
     } catch {
-      // ignore
+      toast.show(`Code ${code} ready to share`, { tone: 'info' });
     }
-  };
+  }, [familyQ.data?.inviteCode, toast]);
 
+  // ---- Derived stat counts ----
   const pendingCount = pendingQ.data?.length ?? 0;
-  const children: ChildProfile[] = childrenQ.data ?? [];
+  // Polish-B4: live count of approvals decided since 00:00 (family timezone)
+  // via GET /approvals/stats/today. Falls back to '—' while loading or on error.
+  const approvedTodayCount: number | string =
+    todayStatsQ.data?.approvedToday ?? (todayStatsQ.isPending ? '—' : 0);
+  const activeRewardsCount = rewardsQ.data?.active?.length ?? 0;
+
+  // ---- Loading state ----
+  const isInitialLoading =
+    familyQ.isPending || childrenQ.isPending || pendingQ.isPending;
+  // Treat queries as errored only when an error surfaces.
+  const hasError =
+    !!familyQ.error || !!childrenQ.error || !!pendingQ.error || !!rewardsQ.error;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScrollView
-        contentContainerStyle={{ paddingBottom: spacing.xl * 2 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {/* Greeting block */}
-        <View style={styles.heroBlock}>
-          <Text style={styles.greeting}>Hello,</Text>
-          <Text style={styles.displayName}>{displayName} 👋</Text>
-          <View style={styles.underline} />
+    <SafeAreaView style={styles.root} edges={['top']}>
+      <GradientBackdrop
+        variant="parentDashboard"
+        intensity="subtle"
+        style={StyleSheet.absoluteFill as any}
+      />
 
-          {/* Family code chip */}
-          {familyQ.data && (
-            <TouchableOpacity
-              activeOpacity={0.85}
-              style={styles.familyChip}
-              onPress={copyCode}
-              accessibilityLabel="Copy family invite code"
-            >
-              <View style={styles.familyChipLeft}>
-                <Text style={styles.familyChipLabel}>Family Code</Text>
-                <Text style={styles.familyChipCode}>{familyQ.data.inviteCode}</Text>
-                <Text style={styles.familyChipName}>{familyQ.data.name}</Text>
-              </View>
-              <View style={styles.familyChipIcon}>
-                <Ionicons
-                  name={copied ? 'checkmark' : 'copy-outline'}
-                  size={18}
-                  color={colors.primary}
-                />
-              </View>
-            </TouchableOpacity>
-          )}
+      {isInitialLoading ? (
+        <View style={styles.loading} accessibilityLabel="Loading dashboard">
+          <ActivityIndicator size="large" color={colors.accent} />
         </View>
-
-        {/* Pending verifications */}
-        <View style={styles.section}>
-          <Card variant="elevated" padding="md">
-            <View style={styles.pendingRow}>
-              <View style={styles.pendingIcon}>
-                <Ionicons name="hourglass-outline" size={22} color={colors.accent} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.pendingTitle}>Pending verifications</Text>
-                <Text style={styles.pendingSub}>
-                  {pendingCount === 0
-                    ? 'All caught up ✓'
-                    : `${pendingCount} mission${pendingCount === 1 ? '' : 's'} awaiting your review.`}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => router.push('/(parent)/approvals')}
-                style={styles.pendingBtn}
-              >
-                <Text style={styles.pendingBtnText}>Review</Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.primary} />
-              </TouchableOpacity>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          {hasError ? (
+            <View style={styles.bannerWrap}>
+              <Banner
+                tone="error"
+                icon="warning"
+                message="Couldn't load your family. Pull to refresh."
+              />
             </View>
-          </Card>
-        </View>
+          ) : null}
 
-        {/* Heroes */}
-        <View style={styles.section}>
-          <View style={styles.sectionHead}>
-            <Text style={styles.sectionTitle}>Your Heroes</Text>
-            <TouchableOpacity onPress={() => router.push('/(parent)/children')}>
-              <Text style={styles.sectionLink}>Manage →</Text>
-            </TouchableOpacity>
+          {/* 1 — Header row */}
+          <View style={styles.headerRow}>
+            <View style={styles.headerCopy}>
+              <SectionHeader
+                eyebrow="WELCOME BACK"
+                title={`Hello, ${displayName}`}
+                subtitle={familyQ.data?.name}
+              />
+            </View>
+            {familyQ.data?.inviteCode ? (
+              <Chip
+                tone="navy"
+                icon={<Icon name="crown" size={14} color={colors.cream} />}
+                label={`Code: ${familyQ.data.inviteCode}`}
+                onPress={copyInviteCode}
+              />
+            ) : null}
           </View>
 
-          {children.length === 0 ? (
-            <Card variant="outlined" padding="lg">
-              <Text style={styles.emptyTitle}>Add your first Hero</Text>
-              <Text style={styles.emptySub}>
-                Create a child profile to assign missions and rewards.
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyCta}
-                onPress={() => router.push('/(parent)/children')}
-              >
-                <Text style={styles.emptyCtaText}>Add a Hero</Text>
-                <Ionicons name="arrow-forward" size={16} color={colors.surface} />
-              </TouchableOpacity>
-            </Card>
-          ) : (
-            <ScrollView
+          {/* 2 — Trait Radar hero */}
+          {children.length === 1 ? (
+            <View style={styles.heroWrap}>
+              <TraitRadarCard
+                child={children[0]}
+                traits={traitByChild[children[0].id]}
+                width="100%"
+              />
+            </View>
+          ) : children.length > 1 ? (
+            <FlatList
               horizontal
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingRight: spacing.md }}
-            >
-              {children.map((c) => (
-                <View key={c.id} style={styles.heroCard}>
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarInitial}>
-                      {c.displayName.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  <Text style={styles.heroName}>{c.displayName}</Text>
-                  {c.hero && (
-                    <Text style={styles.heroLevel}>
-                      Lv {c.hero.level} · {c.hero.coins} 🪙
-                    </Text>
-                  )}
-                  <TouchableOpacity
-                    style={styles.pinChip}
-                    onPress={() => router.push('/(parent)/children')}
-                    accessibilityLabel="Manage PIN"
-                  >
-                    <Text style={styles.pinLabel}>PIN</Text>
-                    <Text style={styles.pinValue}>••••</Text>
-                    <Ionicons name="key-outline" size={14} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
-          )}
-        </View>
+              data={children}
+              keyExtractor={(c) => c.id}
+              snapToInterval={CARD_WIDTH + CARD_GAP}
+              decelerationRate="fast"
+              contentContainerStyle={styles.heroCarousel}
+              renderItem={({ item }) => (
+                <TraitRadarCard
+                  child={item}
+                  traits={traitByChild[item.id]}
+                  width={CARD_WIDTH}
+                  style={{ marginRight: CARD_GAP }}
+                />
+              )}
+            />
+          ) : null}
 
-        {/* Trait radars (per child) */}
-        {children.length > 0 && (
+          {/* 3 — Your Heroes roster */}
           <View style={styles.section}>
-            <View style={styles.sectionHead}>
-              <Text style={styles.sectionTitle}>Trait Growth</Text>
-              <Text style={styles.sectionSub}>Strength · Wisdom · Heart</Text>
-            </View>
-            {children.length === 1 ? (
-              <Card variant="elevated" padding="md">
-                <Text style={styles.radarChildName}>{children[0].displayName}</Text>
-                <View style={styles.radarSingleWrap}>
-                  <TraitRadar
-                    strength={traitByChild[children[0].id]?.strength ?? 0}
-                    wisdom={traitByChild[children[0].id]?.wisdom ?? 0}
-                    heart={traitByChild[children[0].id]?.heart ?? 0}
-                  />
-                </View>
-              </Card>
+            <SectionHeader
+              eyebrow="HEROES"
+              title="Your team"
+              action={
+                <AnimatedPressable
+                  onPress={() => router.push('/(parent)/children')}
+                  accessibilityLabel="Manage heroes"
+                >
+                  <Typography.Body tone="accent">Manage →</Typography.Body>
+                </AnimatedPressable>
+              }
+            />
+            {children.length === 0 ? (
+              <Surface variant="cream" padding="lg" radius="lg">
+                <Typography.Heading level={3}>Add your first Hero</Typography.Heading>
+                <Typography.Body tone="secondary" style={{ marginTop: 4 }}>
+                  Create a child profile to assign missions and rewards.
+                </Typography.Body>
+                <View style={{ height: spacing.md }} />
+                <AnimatedPressable
+                  onPress={() => router.push('/(parent)/children')}
+                  accessibilityLabel="Add a hero"
+                  style={styles.emptyCta}
+                >
+                  <Typography.Body tone="onNavy" emphasis>
+                    Add a Hero
+                  </Typography.Body>
+                </AnimatedPressable>
+              </Surface>
             ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingRight: spacing.md }}
-              >
-                {children.map((c) => {
-                  const t = traitByChild[c.id];
-                  return (
-                    <View key={c.id} style={styles.radarCard}>
-                      <Text style={styles.radarChildName}>{c.displayName}</Text>
-                      <TraitRadar
-                        strength={t?.strength ?? 0}
-                        wisdom={t?.wisdom ?? 0}
-                        heart={t?.heart ?? 0}
-                        size={260}
-                      />
-                    </View>
-                  );
-                })}
-              </ScrollView>
+              <View style={{ gap: spacing.sm }}>
+                {children.map((c) => (
+                  <RosterRow
+                    key={c.id}
+                    child={{
+                      displayName: c.displayName,
+                      avatarUrl: c.avatarUrl ?? undefined,
+                    }}
+                    creature={
+                      c.creature
+                        ? {
+                            species: c.creature.species,
+                            stage: c.creature.stage,
+                            happiness: c.creature.happiness,
+                            name: c.creature.name,
+                          }
+                        : undefined
+                    }
+                    onPress={() => router.push('/(parent)/children')}
+                  />
+                ))}
+              </View>
             )}
           </View>
-        )}
 
-        {/* Quick actions */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.quickRow}>
-            <TouchableOpacity
-              style={styles.quickAction}
-              onPress={() => router.push('/(parent)/missions')}
-            >
-              <View style={[styles.quickIcon, { backgroundColor: colors.primary }]}>
-                <Ionicons name="flag" size={22} color={colors.surface} />
-              </View>
-              <Text style={styles.quickLabel}>New Mission</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.quickAction}
-              onPress={() => router.push('/(parent)/rewards')}
-            >
-              <View style={[styles.quickIcon, { backgroundColor: colors.accent }]}>
-                <Ionicons name="gift" size={22} color={colors.surface} />
-              </View>
-              <Text style={styles.quickLabel}>New Reward Goal</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.quickAction}
-              onPress={() => router.push('/(parent)/children')}
-            >
-              <View style={[styles.quickIcon, { backgroundColor: colors.success }]}>
-                <Ionicons name="person-add" size={22} color={colors.surface} />
-              </View>
-              <Text style={styles.quickLabel}>Add Hero</Text>
-            </TouchableOpacity>
+          {/* 4 — Quick actions */}
+          <View style={styles.section}>
+            <SectionHeader title="Quick actions" />
+            <View style={styles.quickGrid}>
+              <QuickActionTile
+                icon="scroll"
+                label="New Mission"
+                onPress={() => router.push('/(parent)/missions')}
+              />
+              <QuickActionTile
+                icon="heart"
+                label="New Reward"
+                onPress={() => router.push('/(parent)/rewards')}
+              />
+              <QuickActionTile
+                icon="plus"
+                label="Add Hero"
+                onPress={() => router.push('/(parent)/children')}
+              />
+            </View>
           </View>
-        </View>
-      </ScrollView>
+
+          {/* 5 — Stats strip */}
+          <View style={styles.section}>
+            <View style={styles.statsRow}>
+              <View style={styles.statSlot}>
+                <StatCard
+                  eyebrow="PENDING"
+                  value={pendingCount}
+                  label="Verifications"
+                  icon="mail"
+                  onPress={() => router.push('/(parent)/approvals')}
+                />
+              </View>
+              <View style={styles.statSlot}>
+                <StatCard
+                  eyebrow="TODAY"
+                  value={approvedTodayCount}
+                  label="Approved"
+                  icon="checkCircle"
+                />
+              </View>
+              <View style={styles.statSlot}>
+                <StatCard
+                  eyebrow="REWARDS"
+                  value={activeRewardsCount}
+                  label="Active goals"
+                  icon="crown"
+                />
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
+interface TraitRadarCardProps {
+  child: ChildProfile;
+  traits?: TraitSummary;
+  width: number | '100%';
+  style?: ViewStyle;
+}
+
+function TraitRadarCard({ child, traits, width, style }: TraitRadarCardProps) {
+  const strength = traits?.strength ?? 0;
+  const wisdom = traits?.wisdom ?? 0;
+  const heart = traits?.heart ?? 0;
+  // Auto-size the radar to fit the card.
+  const screenW = Dimensions.get('window').width;
+  const radarSize =
+    typeof width === 'number' ? width - spacing.lg * 2 : Math.min(screenW - spacing.lg * 2, 320);
+
+  return (
+    <Surface
+      variant="card"
+      padding="lg"
+      radius="xl"
+      shadow="card"
+      style={[{ width } as ViewStyle, ...(style ? [style] : [])]}
+    >
+      <Typography.Heading level={2}>{child.displayName}</Typography.Heading>
+      <View style={{ alignItems: 'center', marginTop: spacing.sm }}>
+        <TraitRadar
+          strength={strength}
+          wisdom={wisdom}
+          heart={heart}
+          max={50}
+          size={radarSize}
+        />
+      </View>
+      <View style={styles.traitChipRow}>
+        <Chip
+          tone="strength"
+          label={`Strength · ${strength}`}
+          filled={false}
+        />
+        <Chip tone="wisdom" label={`Wisdom · ${wisdom}`} filled={false} />
+        <Chip tone="heart" label={`Heart · ${heart}`} filled={false} />
+      </View>
+    </Surface>
+  );
+}
+
+interface QuickActionTileProps {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+}
+
+function QuickActionTile({ icon, label, onPress }: QuickActionTileProps) {
+  return (
+    <View style={styles.quickSlot}>
+      <AnimatedPressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <Surface variant="cream" padding="md" radius="lg">
+          <View style={styles.quickInner}>
+            <Icon name={icon} size={28} color={colors.accent} />
+            <Typography.Caption
+              tone="primary"
+              emphasis
+              align="center"
+              style={{ marginTop: spacing.sm }}
+            >
+              {label}
+            </Typography.Caption>
+          </View>
+        </Surface>
+      </AnimatedPressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  heroBlock: {
-    paddingHorizontal: spacing.md,
+  root: { flex: 1, backgroundColor: 'transparent' },
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scroll: {
+    paddingBottom: FLOATING_TAB_BAR_SCREEN_PADDING,
+  },
+  bannerWrap: {
+    paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    paddingBottom: spacing.md,
   },
-  greeting: { fontFamily: fonts.regular, fontSize: 16, color: colors.textSecondary },
-  displayName: {
-    fontFamily: fonts.extraBold,
-    fontSize: 30,
-    color: colors.primary,
-    marginTop: 2,
-    letterSpacing: -0.5,
-  },
-  underline: {
-    width: 42,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.accent,
-    marginTop: 8,
-  },
-  familyChip: {
+  headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.lg,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginTop: spacing.md,
-    ...shadows.sm,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.accent,
-  },
-  familyChipLeft: { flex: 1 },
-  familyChipLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 11,
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  familyChipCode: {
-    fontFamily: fonts.extraBold,
-    fontSize: 22,
-    color: colors.primary,
-    letterSpacing: 2,
-    marginTop: 2,
-  },
-  familyChipName: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  familyChipIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  section: { paddingHorizontal: spacing.md, marginTop: spacing.md },
-  sectionHead: {
-    flexDirection: 'row',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    gap: spacing.md,
   },
-  sectionTitle: { fontFamily: fonts.bold, fontSize: 18, color: colors.primary },
-  sectionSub: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.textSecondary, letterSpacing: 1 },
-  sectionLink: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.accent },
-
-  radarCard: {
-    width: 280,
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    marginRight: spacing.sm,
-    alignItems: 'center',
-    ...shadows.sm,
+  headerCopy: { flex: 1, minWidth: 0 },
+  heroWrap: {
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.md,
   },
-  radarSingleWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.xs,
+  heroCarousel: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
-  radarChildName: {
-    fontFamily: fonts.extraBold,
-    fontSize: 14,
-    color: colors.primary,
-    marginBottom: spacing.xs,
-    textAlign: 'center',
-  },
-
-  pendingRow: { flexDirection: 'row', alignItems: 'center' },
-  pendingIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.warningLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.sm,
-  },
-  pendingTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.primary },
-  pendingSub: { fontFamily: fonts.regular, fontSize: 12, color: colors.textSecondary, marginTop: 2 },
-  pendingBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.background,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: borderRadius.md,
-  },
-  pendingBtnText: { fontFamily: fonts.bold, fontSize: 13, color: colors.primary },
-
-  heroCard: {
-    width: 150,
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    marginRight: spacing.sm,
-    alignItems: 'center',
-    ...shadows.sm,
-  },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  avatarInitial: { fontFamily: fonts.extraBold, fontSize: 22, color: colors.accent },
-  heroName: { fontFamily: fonts.bold, fontSize: 14, color: colors.primary, textAlign: 'center' },
-  heroLevel: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  pinChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.background,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: borderRadius.md,
-    marginTop: spacing.sm,
-  },
-  pinLabel: { fontFamily: fonts.semiBold, fontSize: 10, color: colors.textSecondary },
-  pinValue: { fontFamily: fonts.bold, fontSize: 14, color: colors.primary, letterSpacing: 2 },
-  pinHint: {
-    fontFamily: fonts.regular,
-    fontSize: 10,
-    color: colors.textSecondary,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-
-  emptyTitle: { fontFamily: fonts.bold, fontSize: 16, color: colors.primary },
-  emptySub: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 4,
-    marginBottom: spacing.md,
+  section: {
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.lg,
   },
   emptyCta: {
-    flexDirection: 'row',
-    alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: colors.primary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    borderRadius: borderRadius.lg,
-    gap: 6,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: 999,
   },
-  emptyCtaText: { fontFamily: fonts.bold, fontSize: 14, color: colors.surface },
-
-  quickRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-  quickAction: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    alignItems: 'center',
-    ...shadows.sm,
+  traitChipRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
+    marginTop: spacing.md,
+    justifyContent: 'center',
   },
-  quickIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  quickGrid: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  quickSlot: { flex: 1 },
+  quickInner: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.sm,
+    paddingVertical: spacing.xs,
   },
-  quickLabel: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.primary, textAlign: 'center' },
+  statsRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  statSlot: { flex: 1 },
 });

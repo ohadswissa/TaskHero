@@ -1,14 +1,18 @@
 /**
- * Child Mission List — M5a.
+ * Child Mission List — Polish-B2 rebuild.
  *
- * Fetches `GET /assignments/mine`, groups by status:
- *   - Active        : PENDING + IN_PROGRESS
- *   - Awaiting verify: SUBMITTED
+ * Inherits cream gradient from (child)/_layout.tsx.
  *
- * Each row card has a left trait-color stripe (red/blue/orange), a status
- * badge, a category chip, and a 1-line description excerpt. Tap → mission
- * detail. Pull-to-refresh refetches. Approved/rejected are intentionally
- * hidden to keep the surface clean.
+ * Layout:
+ *  - <SectionHeader title="Your missions" subtitle="Tap one to begin." eyebrow="Today">
+ *  - Two sections (Active, Awaiting verify), each headed by its own eyebrow row.
+ *  - Mission rows are Surface(card) wrapped in AnimatedPressable:
+ *     • 4px trait-colored left stripe
+ *     • Small trait Icon in a tinted circle
+ *     • Title + category caption
+ *     • Status Chip (warning / success) when relevant
+ *     • Trailing chevron
+ *  - <EmptyState/> when nothing's loaded.
  */
 import React, { useMemo } from 'react';
 import {
@@ -16,25 +20,38 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Text,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { assignmentsApi, extractApiError, queryKeys } from '@/api';
-import type { Assignment } from '@/api';
+import type { Assignment, TraitCategory } from '@/api';
 import {
-  borderRadius,
+  AnimatedPressable,
+  Banner,
+  Caption,
+  Chip,
+  EmptyState,
+  FLOATING_TAB_BAR_SCREEN_PADDING,
+  Icon,
+  SectionHeader,
+  Surface,
+  Typography,
+  type IconName,
+} from '@/components/ui';
+import {
   colors,
-  fonts,
-  shadows,
   spacing,
   traitColor,
   traitLabel,
 } from '@/theme';
+
+const TRAIT_ICON: Record<TraitCategory, IconName> = {
+  STRENGTH: 'strength',
+  WISDOM: 'wisdom',
+  HEART: 'heart',
+};
 
 export default function ChildMissionsScreen() {
   const {
@@ -59,78 +76,83 @@ export default function ChildMissionsScreen() {
     return { active: a, awaiting: w };
   }, [assignments]);
 
-  return (
-    <SafeAreaView style={styles.root} edges={['top']}>
-      <View style={styles.header}>
-        <Text style={styles.eyebrow}>YOUR ADVENTURES</Text>
-        <Text style={styles.title}>Missions</Text>
-      </View>
+  const isEmpty = !isPending && !error && active.length === 0 && awaiting.length === 0;
 
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <View style={styles.header}>
+        <SectionHeader
+          eyebrow="Today"
+          title="Your missions"
+          subtitle="Tap one to begin."
+        />
+      </View>
       <ScrollView
         contentContainerStyle={styles.scroll}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
+          <RefreshControl
+            refreshing={isRefetching}
+            onRefresh={() => refetch()}
+            tintColor={colors.amberDeep}
+          />
         }
         showsVerticalScrollIndicator={false}
       >
         {isPending && (
           <View style={styles.loading}>
-            <ActivityIndicator size="large" color={colors.accent} />
+            <ActivityIndicator size="large" color={colors.amberDeep} />
           </View>
         )}
 
         {!isPending && error && (
-          <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>Hmm, something went wrong</Text>
-            <Text style={styles.emptyBody}>{extractApiError(error)}</Text>
-            <TouchableOpacity style={styles.emptyBtn} onPress={() => refetch()}>
-              <Text style={styles.emptyBtnTxt}>Try again</Text>
-            </TouchableOpacity>
+          <View style={styles.errBlock}>
+            <Banner tone="error" title="Something's not right" message={extractApiError(error)} />
+            <AnimatedPressable
+              onPress={() => refetch()}
+              style={styles.retryBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Try again"
+            >
+              <Typography.Heading level={3} tone="primary">Try again</Typography.Heading>
+            </AnimatedPressable>
           </View>
         )}
 
-        {!isPending && !error && active.length === 0 && awaiting.length === 0 && (
-          <View style={styles.empty}>
-            <View style={styles.emptyIcon}>
-              <Ionicons name="sparkles" size={40} color={colors.accent} />
-            </View>
-            <Text style={styles.emptyTitle}>Your next adventure is being prepared</Text>
-            <Text style={styles.emptyBody}>Check back soon, hero.</Text>
-          </View>
+        {isEmpty && (
+          <EmptyState
+            illustration={<Icon name="sparkle" size={32} color={colors.amberDeep} />}
+            title="Your next adventure is coming"
+            body="Check back soon, hero."
+          />
         )}
 
         {active.length > 0 && (
-          <>
-            <SectionHeader label="Active" count={active.length} />
+          <View style={styles.section}>
+            <View style={styles.sectionLabelRow}>
+              <Typography.Eyebrow tone="accent">Active</Typography.Eyebrow>
+              <Chip label={`${active.length}`} tone="navy" size="sm" />
+            </View>
             {active.map((a) => (
               <MissionRow key={a.id} assignment={a} />
             ))}
-          </>
+          </View>
         )}
 
         {awaiting.length > 0 && (
-          <>
-            <SectionHeader label="Awaiting verify" count={awaiting.length} />
+          <View style={styles.section}>
+            <View style={styles.sectionLabelRow}>
+              <Typography.Eyebrow tone="accent">Awaiting verify</Typography.Eyebrow>
+              <Chip label={`${awaiting.length}`} tone="navy" size="sm" />
+            </View>
             {awaiting.map((a) => (
               <MissionRow key={a.id} assignment={a} />
             ))}
-          </>
+          </View>
         )}
 
         <View style={{ height: spacing.xl }} />
       </ScrollView>
     </SafeAreaView>
-  );
-}
-
-function SectionHeader({ label, count }: { label: string; count: number }) {
-  return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionLabel}>{label}</Text>
-      <View style={styles.sectionCount}>
-        <Text style={styles.sectionCountTxt}>{count}</Text>
-      </View>
-    </View>
   );
 }
 
@@ -141,170 +163,100 @@ function MissionRow({ assignment }: { assignment: Assignment }) {
   const isAwaiting = assignment.status === 'SUBMITTED';
 
   return (
-    <TouchableOpacity
-      activeOpacity={0.82}
+    <AnimatedPressable
       onPress={() => router.push(`/(child)/mission/${assignment.id}` as never)}
-      style={styles.row}
+      accessibilityRole="button"
+      accessibilityLabel={`Open mission ${mission?.title ?? ''}`}
+      style={styles.rowOuter}
     >
-      <View style={[styles.stripe, { backgroundColor: stripe }]} />
-      <View style={styles.rowBody}>
-        <View style={styles.rowTopLine}>
-          {trait && (
-            <Text style={[styles.traitTag, { color: stripe }]}>
-              {traitLabel(trait).toUpperCase()}
-            </Text>
-          )}
-          {isAwaiting && (
-            <View style={styles.awaitingBadge}>
-              <Text style={styles.awaitingBadgeTxt}>Awaiting</Text>
-            </View>
-          )}
+      <Surface variant="card" radius="lg" padding="none" shadow="card" style={styles.rowSurface as any}>
+        <View style={[styles.stripe, { backgroundColor: stripe }]} />
+        <View style={styles.rowBody}>
+          <View style={styles.rowLeft}>
+            {trait && (
+              <View style={[styles.traitCircle, { backgroundColor: stripe + '22', borderColor: stripe + '55' }]}>
+                <Icon name={TRAIT_ICON[trait]} size={18} color={stripe} />
+              </View>
+            )}
+          </View>
+          <View style={styles.rowMid}>
+            <Typography.Heading level={2} tone="primary" numberOfLines={1}>
+              {mission?.title ?? 'Mission'}
+            </Typography.Heading>
+            <Caption tone="secondary" numberOfLines={1}>
+              {trait ? traitLabel(trait) : 'Mission'}
+              {mission?.description ? ` · ${mission.description}` : ''}
+            </Caption>
+            {isAwaiting && (
+              <View style={styles.statusChipRow}>
+                <Chip label="Awaiting verify" tone="warning" size="sm" />
+              </View>
+            )}
+          </View>
+          <Icon name="chevronRight" size={20} color={colors.textTertiary} />
         </View>
-        <Text style={styles.rowTitle} numberOfLines={1}>
-          {mission?.title ?? 'Mission'}
-        </Text>
-        {mission?.description && (
-          <Text style={styles.rowDesc} numberOfLines={1}>
-            {mission.description}
-          </Text>
-        )}
-      </View>
-      <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
-    </TouchableOpacity>
+      </Surface>
+    </AnimatedPressable>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
+  safe: { flex: 1, backgroundColor: 'transparent' },
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    paddingBottom: 0,
   },
-  eyebrow: {
-    fontFamily: fonts.bold,
-    fontSize: 11,
-    letterSpacing: 2,
-    color: colors.textSecondary,
-  },
-  title: {
-    fontFamily: fonts.extraBold,
-    fontSize: 28,
-    color: colors.primary,
-  },
+  scroll: { paddingBottom: FLOATING_TAB_BAR_SCREEN_PADDING, paddingTop: spacing.sm },
 
-  scroll: { paddingBottom: spacing.xl },
   loading: { paddingVertical: spacing.xxl, alignItems: 'center' },
-
-  empty: {
+  errBlock: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg },
+  retryBtn: {
+    marginTop: spacing.md,
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.xxl,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.amberDeep,
+    borderRadius: 999,
   },
-  emptyIcon: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: colors.warningLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  emptyTitle: {
-    fontFamily: fonts.extraBold,
-    fontSize: 18,
-    color: colors.primary,
-    textAlign: 'center',
-  },
-  emptyBody: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-  },
-  emptyBtn: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: borderRadius.md,
-  },
-  emptyBtnTxt: { fontFamily: fonts.bold, color: colors.primary },
 
-  sectionHeader: {
+  section: { marginTop: spacing.md },
+  sectionLabelRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     paddingHorizontal: spacing.lg,
-    marginTop: spacing.lg,
     marginBottom: spacing.sm,
   },
-  sectionLabel: {
-    fontFamily: fonts.bold,
-    fontSize: 12,
-    letterSpacing: 1.5,
-    color: colors.textSecondary,
-  },
-  sectionCount: {
-    minWidth: 22,
-    paddingHorizontal: 6,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: colors.borderLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sectionCountTxt: { fontFamily: fonts.bold, fontSize: 11, color: colors.textSecondary },
 
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
+  rowOuter: {
     marginHorizontal: spacing.lg,
     marginBottom: spacing.sm,
-    borderRadius: borderRadius.lg,
-    paddingRight: spacing.md,
-    overflow: 'hidden',
-    ...shadows.sm,
   },
+  rowSurface: { overflow: 'hidden' },
   stripe: {
-    width: 5,
-    alignSelf: 'stretch',
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
   },
   rowBody: {
-    flex: 1,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-  },
-  rowTopLine: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingLeft: spacing.md + 4,
+    paddingRight: spacing.md,
     gap: spacing.sm,
-    marginBottom: 2,
   },
-  traitTag: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    letterSpacing: 1.2,
+  rowLeft: { width: 40 },
+  rowMid: { flex: 1 },
+  traitCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  awaitingBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: borderRadius.full,
-    backgroundColor: colors.infoLight,
-  },
-  awaitingBadgeTxt: {
-    fontFamily: fonts.bold,
-    fontSize: 10,
-    color: colors.info,
-    letterSpacing: 0.4,
-  },
-  rowTitle: { fontFamily: fonts.extraBold, fontSize: 16, color: colors.primary },
-  rowDesc: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
+  statusChipRow: { flexDirection: 'row', marginTop: 6 },
 });

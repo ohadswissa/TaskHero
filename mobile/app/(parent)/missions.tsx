@@ -1,724 +1,825 @@
-import React, { useState } from 'react';
+/**
+ * Parent Missions — Polish-B4 rebuild.
+ *
+ * Two-segment library + live-assignment view, composed entirely of design
+ * system primitives:
+ *   GradientBackdrop · SectionHeader · Chip · Surface · ScrollCard ·
+ *   EmptyState · AnimatedPressable · Avatar · Icon · Typography · Banner ·
+ *   Toast (ToastStack mounted by _layout).
+ *
+ * Templates segment:
+ *   • Templates fetched via `missionsApi.listTemplates()`, grouped by
+ *     traitCategory (STRENGTH / WISDOM / HEART / OTHER).
+ *   • Each template card shows title, hero-wisdom snippet, XP/coin chips,
+ *     and "Assign…" → bottom sheet listing children Avatars. Selecting a
+ *     child creates a mission from the template + assigns in one
+ *     mutation (existing missionsApi.createMission +
+ *     assignmentsApi.createAssignment).
+ *
+ * Assignments segment:
+ *   • Currently-pending verifications across the family
+ *     (approvalsApi.listPending) shown grouped per child with status chips
+ *     and submitted-time.
+ *   • Below that, the parent's recently-created missions
+ *     (missionsApi.listMyMissions) with assignment-count chips.
+ */
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  TextInput,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
   RefreshControl,
-  Alert,
+  ScrollView,
+  StyleSheet,
+  View,
+  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Card, Button, Input, ScreenHeader } from '@/components/common';
-import { missionsApi } from '@/api/missions.api';
-import { assignmentsApi } from '@/api/assignments.api';
-import { childrenApi } from '@/api/children.api';
-import { extractApiError } from '@/api/client';
+import {
+  approvalsApi,
+  assignmentsApi,
+  childrenApi,
+  extractApiError,
+  missionsApi,
+  queryKeys,
+} from '@/api';
 import type {
-  CreateMissionRequest,
-  MissionCategory,
+  ChildProfile,
+  Mission,
   MissionTemplate,
+  PendingApprovalRow,
   TraitCategory,
 } from '@/api/types';
-import { colors, spacing, borderRadius, fonts, shadows, traits, traitColor, traitLabel } from '@/theme';
+import {
+  AnimatedPressable,
+  Avatar,
+  Banner,
+  Chip,
+  EmptyState,
+  FLOATING_TAB_BAR_SCREEN_PADDING,
+  GradientBackdrop,
+  Icon,
+  ScrollCard,
+  SectionHeader,
+  Surface,
+  Typography,
+  useToast,
+  type ChipTone,
+} from '@/components/ui';
+import { borderRadius, colors, spacing, traitColor, traitLabel } from '@/theme';
 
-type TabKey = 'templates' | 'mine' | 'create';
+type Segment = 'templates' | 'assignments';
 
-const CATEGORIES: { id: MissionCategory; label: string }[] = [
-  { id: 'DAILY_CHORE', label: 'Daily Chore' },
-  { id: 'EDUCATIONAL', label: 'Learning' },
-  { id: 'PHYSICAL', label: 'Exercise' },
-  { id: 'CREATIVE', label: 'Creative' },
-  { id: 'HABIT', label: 'Social/Habit' },
-];
+const TRAIT_TONE: Record<TraitCategory, ChipTone> = {
+  STRENGTH: 'strength',
+  WISDOM: 'wisdom',
+  HEART: 'heart',
+};
 
-const TRAIT_BUTTONS: { id: TraitCategory; emoji: string }[] = [
-  { id: 'STRENGTH', emoji: '💪' },
-  { id: 'WISDOM', emoji: '🧠' },
-  { id: 'HEART', emoji: '❤️' },
-];
+const TRAIT_ORDER: TraitCategory[] = ['STRENGTH', 'WISDOM', 'HEART'];
 
-export default function MissionsScreen() {
+export default function ParentMissionsScreen() {
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<TabKey>('templates');
+  const toast = useToast();
+  const [segment, setSegment] = useState<Segment>('templates');
   const [refreshing, setRefreshing] = useState(false);
-
-  // Create form state
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState<MissionCategory>('DAILY_CHORE');
-  const [trait, setTrait] = useState<TraitCategory>('STRENGTH');
-  const [heroWisdom, setHeroWisdom] = useState('');
-  const [xpReward, setXpReward] = useState(10);
-  const [coinReward, setCoinReward] = useState(5);
-  const [childProfileId, setChildProfileId] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [submittedFromTemplateId, setSubmittedFromTemplateId] = useState<string | null>(null);
+  const [assignTemplate, setAssignTemplate] = useState<MissionTemplate | null>(null);
 
   const templatesQ = useQuery({
-    queryKey: ['mission-templates', 'heros-path'],
-    queryFn: () => missionsApi.listTemplates('heros-path'),
+    queryKey: [...queryKeys.missionTemplates.list],
+    queryFn: () => missionsApi.listTemplates(),
   });
-  const myMissionsQ = useQuery({ queryKey: ['missions', 'mine'], queryFn: missionsApi.listMyMissions });
-  const childrenQ = useQuery({ queryKey: ['children'], queryFn: childrenApi.listChildren });
+  const myMissionsQ = useQuery({
+    queryKey: [...queryKeys.missions.list],
+    queryFn: missionsApi.listMyMissions,
+  });
+  const childrenQ = useQuery({
+    queryKey: [...queryKeys.children.list],
+    queryFn: childrenApi.listChildren,
+  });
+  const pendingQ = useQuery({
+    queryKey: [...queryKeys.approvals.pending],
+    queryFn: approvalsApi.listPending,
+  });
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['mission-templates'] }),
-      queryClient.invalidateQueries({ queryKey: ['missions', 'mine'] }),
-      queryClient.invalidateQueries({ queryKey: ['children'] }),
-    ]);
-    setRefreshing(false);
-  };
+  const templates = templatesQ.data ?? [];
+  const missions = myMissionsQ.data ?? [];
+  const children = childrenQ.data ?? [];
+  const pending = pendingQ.data ?? [];
 
-  const createMissionMut = useMutation({
-    mutationFn: async (payload: CreateMissionRequest & { childProfileId?: string | null }) => {
-      const { childProfileId: cpid, ...missionPayload } = payload;
-      const mission = await missionsApi.createMission(missionPayload);
-      let assignment = null;
-      if (cpid) {
-        assignment = await assignmentsApi.createAssignment({
-          missionId: mission.id,
-          childProfileId: cpid,
-        });
-      }
+  const templatesByTrait = useMemo(() => {
+    const map: Record<string, MissionTemplate[]> = {
+      STRENGTH: [],
+      WISDOM: [],
+      HEART: [],
+      OTHER: [],
+    };
+    for (const t of templates) {
+      const key = t.traitCategory ?? 'OTHER';
+      (map[key] ??= []).push(t);
+    }
+    return map;
+  }, [templates]);
+
+  const pendingByChild = useMemo(() => {
+    const map = new Map<string, PendingApprovalRow[]>();
+    for (const row of pending) {
+      const arr = map.get(row.childProfileId) ?? [];
+      arr.push(row);
+      map.set(row.childProfileId, arr);
+    }
+    return map;
+  }, [pending]);
+
+  const assignMut = useMutation({
+    mutationFn: async (vars: {
+      template: MissionTemplate;
+      childProfileId: string;
+    }) => {
+      const { template, childProfileId } = vars;
+      const mission = await missionsApi.createMission({
+        title: template.title,
+        description: template.description,
+        category: template.category,
+        traitCategory: template.traitCategory ?? undefined,
+        heroWisdom: template.heroWisdom ?? undefined,
+        xpReward: template.suggestedXp,
+        coinReward: template.suggestedCoins,
+        templateId: template.id,
+      });
+      const assignment = await assignmentsApi.createAssignment({
+        missionId: mission.id,
+        childProfileId,
+      });
       return { mission, assignment };
     },
-    onSuccess: ({ mission, assignment }) => {
-      queryClient.invalidateQueries({ queryKey: ['missions', 'mine'] });
-      Alert.alert(
-        'Mission created',
-        assignment
-          ? `"${mission.title}" was assigned successfully.`
-          : `"${mission.title}" is saved. Assign it from a child profile later.`,
-      );
-      resetCreateForm();
-      setTab('mine');
+    onSuccess: ({ mission }, vars) => {
+      const childName =
+        children.find((c) => c.id === vars.childProfileId)?.displayName ?? 'your Hero';
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.missions.list] });
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.pending] });
+      toast.show(`"${mission.title}" assigned to ${childName}`, { tone: 'success' });
+      setAssignTemplate(null);
     },
-    onError: (err) => setFormError(extractApiError(err)),
+    onError: (err) => {
+      toast.show(extractApiError(err), { tone: 'error' });
+    },
   });
 
-  const resetCreateForm = () => {
-    setTitle('');
-    setDescription('');
-    setCategory('DAILY_CHORE');
-    setTrait('STRENGTH');
-    setHeroWisdom('');
-    setXpReward(10);
-    setCoinReward(5);
-    setChildProfileId(null);
-    setFormError(null);
-    setSubmittedFromTemplateId(null);
-  };
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.missionTemplates.list] }),
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.missions.list] }),
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.children.list] }),
+        queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.pending] }),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [queryClient]);
 
-  const applyTemplate = (t: MissionTemplate) => {
-    setTitle(t.title);
-    setDescription(t.description);
-    setCategory(t.category);
-    setTrait(t.traitCategory ?? 'STRENGTH');
-    setHeroWisdom(t.heroWisdom ?? '');
-    setXpReward(t.suggestedXp);
-    setCoinReward(t.suggestedCoins);
-    setSubmittedFromTemplateId(t.id);
-    setTab('create');
-  };
-
-  const submitCreate = () => {
-    setFormError(null);
-    const t = title.trim();
-    if (t.length < 1 || t.length > 120) {
-      setFormError('Title must be 1–120 characters.');
-      return;
-    }
-    if (description.length > 500) {
-      setFormError('Description must be 500 characters or fewer.');
-      return;
-    }
-    if (heroWisdom.length > 280) {
-      setFormError("Hero's Wisdom must be 280 characters or fewer.");
-      return;
-    }
-    if (xpReward < 1 || xpReward > 100) {
-      setFormError('XP must be between 1 and 100.');
-      return;
-    }
-    if (coinReward < 1 || coinReward > 50) {
-      setFormError('Coins must be between 1 and 50.');
-      return;
-    }
-    createMissionMut.mutate({
-      title: t,
-      description: description.trim() || t,
-      category,
-      traitCategory: trait,
-      heroWisdom: heroWisdom.trim() || undefined,
-      xpReward,
-      coinReward,
-      templateId: submittedFromTemplateId ?? undefined,
-      childProfileId,
-    });
-  };
+  const initialLoading =
+    templatesQ.isPending && myMissionsQ.isPending && childrenQ.isPending;
+  const hasError =
+    !!templatesQ.error ||
+    !!myMissionsQ.error ||
+    !!childrenQ.error ||
+    !!pendingQ.error;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <ScreenHeader
-        title="Missions"
-        subtitle="Build missions with Hero's Wisdom and assign them to a hero."
+    <SafeAreaView style={styles.root} edges={['top']}>
+      <GradientBackdrop
+        variant="parentDashboard"
+        intensity="subtle"
+        style={StyleSheet.absoluteFill as any}
       />
 
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        {(['templates', 'mine', 'create'] as TabKey[]).map((t) => (
-          <TouchableOpacity
-            key={t}
-            style={[styles.tab, tab === t && styles.tabActive]}
-            onPress={() => setTab(t)}
-          >
-            <Text style={[styles.tabLabel, tab === t && styles.tabLabelActive]}>
-              {t === 'templates' ? 'Templates' : t === 'mine' ? 'My Missions' : 'Create'}
-            </Text>
-            {tab === t && <View style={styles.tabUnderline} />}
-          </TouchableOpacity>
-        ))}
-      </View>
+      {initialLoading ? (
+        <View style={styles.loading} accessibilityLabel="Loading missions">
+          <ActivityIndicator size="large" color={colors.accent} />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          {hasError ? (
+            <View style={styles.bannerWrap}>
+              <Banner
+                tone="error"
+                icon="warning"
+                message="Couldn't load missions. Pull to refresh."
+              />
+            </View>
+          ) : null}
 
-      <ScrollView
-        contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing.xl * 2 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {tab === 'templates' && (
-          <TemplatesTab
-            templates={templatesQ.data ?? []}
-            isLoading={templatesQ.isLoading}
-            onUse={applyTemplate}
-          />
-        )}
+          <View style={styles.headerRow}>
+            <SectionHeader
+              eyebrow="MISSIONS"
+              title="Mission library"
+              subtitle="Assign quests that grow your Hero's traits."
+            />
+          </View>
 
-        {tab === 'mine' && (
-          <MyMissionsTab missions={myMissionsQ.data ?? []} isLoading={myMissionsQ.isLoading} />
-        )}
+          {/* Segment switcher */}
+          <View style={styles.segmentWrap}>
+            <View style={styles.segmentRow}>
+              <SegmentChip
+                label="Templates"
+                active={segment === 'templates'}
+                count={templates.length}
+                onPress={() => setSegment('templates')}
+              />
+              <SegmentChip
+                label="Assignments"
+                active={segment === 'assignments'}
+                count={pending.length}
+                tone="warning"
+                onPress={() => setSegment('assignments')}
+              />
+            </View>
+          </View>
 
-        {tab === 'create' && (
-          <CreateTab
-            title={title}
-            setTitle={setTitle}
-            description={description}
-            setDescription={setDescription}
-            category={category}
-            setCategory={setCategory}
-            trait={trait}
-            setTrait={setTrait}
-            heroWisdom={heroWisdom}
-            setHeroWisdom={setHeroWisdom}
-            xpReward={xpReward}
-            setXpReward={setXpReward}
-            coinReward={coinReward}
-            setCoinReward={setCoinReward}
-            childProfileId={childProfileId}
-            setChildProfileId={setChildProfileId}
-            children={childrenQ.data ?? []}
-            formError={formError}
-            submitting={createMissionMut.isPending}
-            onSubmit={submitCreate}
-          />
-        )}
-      </ScrollView>
+          {segment === 'templates' ? (
+            templates.length === 0 ? (
+              <View style={styles.section}>
+                <Surface variant="cream" padding="lg" radius="lg">
+                  <EmptyState
+                    title="No templates yet"
+                    body="Check back soon — your library will populate with curated quests."
+                  />
+                </Surface>
+              </View>
+            ) : (
+              <View style={styles.section}>
+                {TRAIT_ORDER.map((trait) => {
+                  const list = templatesByTrait[trait] ?? [];
+                  if (list.length === 0) return null;
+                  return (
+                    <View key={trait} style={styles.traitBlock}>
+                      <View style={styles.traitHeader}>
+                        <View
+                          style={[
+                            styles.traitSwatch,
+                            { backgroundColor: traitColor(trait) },
+                          ]}
+                        />
+                        <Typography.Heading level={3}>
+                          {traitLabel(trait)} quests
+                        </Typography.Heading>
+                      </View>
+                      <View style={{ gap: spacing.sm }}>
+                        {list.map((t) => (
+                          <TemplateCard
+                            key={t.id}
+                            template={t}
+                            disabled={children.length === 0}
+                            onAssign={() => setAssignTemplate(t)}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  );
+                })}
+                {(templatesByTrait.OTHER ?? []).length > 0 ? (
+                  <View style={styles.traitBlock}>
+                    <View style={styles.traitHeader}>
+                      <View
+                        style={[
+                          styles.traitSwatch,
+                          { backgroundColor: colors.textSecondary },
+                        ]}
+                      />
+                      <Typography.Heading level={3}>Other</Typography.Heading>
+                    </View>
+                    <View style={{ gap: spacing.sm }}>
+                      {(templatesByTrait.OTHER ?? []).map((t) => (
+                        <TemplateCard
+                          key={t.id}
+                          template={t}
+                          disabled={children.length === 0}
+                          onAssign={() => setAssignTemplate(t)}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
+
+                {children.length === 0 ? (
+                  <View style={{ marginTop: spacing.md }}>
+                    <Banner
+                      tone="info"
+                      icon="crown"
+                      message="Add a Hero first before assigning a quest."
+                    />
+                  </View>
+                ) : null}
+              </View>
+            )
+          ) : (
+            <AssignmentsTab
+              pendingByChild={pendingByChild}
+              children={children}
+              missions={missions}
+            />
+          )}
+        </ScrollView>
+      )}
+
+      <AssignSheet
+        template={assignTemplate}
+        children={children}
+        onClose={() => setAssignTemplate(null)}
+        onConfirm={(childProfileId) =>
+          assignTemplate &&
+          assignMut.mutate({ template: assignTemplate, childProfileId })
+        }
+        submitting={assignMut.isPending}
+      />
     </SafeAreaView>
   );
 }
 
 // =========================================================================
-// Templates tab
+// Segment chip
 // =========================================================================
 
-function TemplatesTab({
-  templates,
-  isLoading,
-  onUse,
-}: {
-  templates: MissionTemplate[];
-  isLoading: boolean;
-  onUse: (t: MissionTemplate) => void;
-}) {
-  if (isLoading) {
-    return <Text style={styles.empty}>Loading templates…</Text>;
-  }
-  if (templates.length === 0) {
-    return <Text style={styles.empty}>No templates yet.</Text>;
-  }
+interface SegmentChipProps {
+  label: string;
+  active: boolean;
+  count?: number;
+  tone?: 'navy' | 'warning';
+  onPress: () => void;
+}
+
+function SegmentChip({
+  label,
+  active,
+  count,
+  tone = 'navy',
+  onPress,
+}: SegmentChipProps) {
+  const display =
+    typeof count === 'number' && count > 0 ? `${label} · ${count}` : label;
   return (
-    <View>
-      {templates.map((t) => (
-        <Card key={t.id} variant="elevated" padding="md" style={{ marginBottom: spacing.sm }}>
-          <View style={styles.tplHead}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tplTitle}>{t.title}</Text>
-              <View style={styles.tplChipRow}>
-                <TraitChip trait={t.traitCategory} />
-                <View style={styles.metaChip}>
-                  <Text style={styles.metaChipText}>⚡ {t.suggestedXp}</Text>
+    <View style={styles.segmentSlot}>
+      <Chip
+        tone={active ? tone : 'neutral'}
+        filled={active}
+        label={display}
+        size="md"
+        onPress={onPress}
+        style={styles.segmentChip}
+      />
+    </View>
+  );
+}
+
+// =========================================================================
+// Template card
+// =========================================================================
+
+interface TemplateCardProps {
+  template: MissionTemplate;
+  disabled: boolean;
+  onAssign: () => void;
+}
+
+function TemplateCard({ template, disabled, onAssign }: TemplateCardProps) {
+  return (
+    <Surface variant="card" padding="lg" radius="lg" shadow="card">
+      <View style={styles.templateHead}>
+        <View style={{ flex: 1 }}>
+          <Typography.Heading level={3} numberOfLines={2}>
+            {template.title}
+          </Typography.Heading>
+          {template.description ? (
+            <Typography.Body
+              tone="secondary"
+              numberOfLines={2}
+              style={{ marginTop: 4 }}
+            >
+              {template.description}
+            </Typography.Body>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={styles.chipRow}>
+        {template.traitCategory ? (
+          <Chip
+            tone={TRAIT_TONE[template.traitCategory]}
+            label={traitLabel(template.traitCategory)}
+            size="sm"
+            filled
+          />
+        ) : null}
+        <Chip
+          tone="accent"
+          label={`+${template.suggestedXp} XP`}
+          size="sm"
+          filled={false}
+        />
+        <Chip
+          tone="warning"
+          label={`+${template.suggestedCoins} coins`}
+          size="sm"
+          filled={false}
+        />
+      </View>
+
+      {template.heroWisdom ? (
+        <View style={{ marginTop: spacing.md }}>
+          <ScrollCard body={template.heroWisdom} align="left" />
+        </View>
+      ) : null}
+
+      <View style={styles.templateActionRow}>
+        <AnimatedPressable
+          onPress={onAssign}
+          disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel={`Assign ${template.title}`}
+          style={
+            disabled
+              ? [styles.assignBtn, styles.assignBtnDisabled]
+              : styles.assignBtn
+          }
+        >
+          <Icon name="plus" size={16} color={colors.cream} />
+          <Typography.Body tone="onNavy" emphasis style={{ marginLeft: 6 }}>
+            Assign…
+          </Typography.Body>
+        </AnimatedPressable>
+      </View>
+    </Surface>
+  );
+}
+
+// =========================================================================
+// Assignments tab
+// =========================================================================
+
+interface AssignmentsTabProps {
+  pendingByChild: Map<string, PendingApprovalRow[]>;
+  children: ChildProfile[];
+  missions: Mission[];
+}
+
+function AssignmentsTab({
+  pendingByChild,
+  children,
+  missions,
+}: AssignmentsTabProps) {
+  const hasPending = pendingByChild.size > 0;
+  const recentMissions = missions.slice(0, 6);
+
+  return (
+    <View style={styles.section}>
+      <SectionHeader
+        title="Awaiting verification"
+        subtitle="Submissions sitting in your inbox."
+      />
+      {!hasPending ? (
+        <Surface variant="cream" padding="lg" radius="lg">
+          <EmptyState
+            title="Inbox is clear"
+            body="No submissions waiting for your review."
+          />
+        </Surface>
+      ) : (
+        <View style={{ gap: spacing.md }}>
+          {children.map((c) => {
+            const rows = pendingByChild.get(c.id) ?? [];
+            if (rows.length === 0) return null;
+            return (
+              <Surface
+                key={c.id}
+                variant="card"
+                padding="md"
+                radius="lg"
+                shadow="card"
+              >
+                <View style={styles.childHeader}>
+                  <Avatar
+                    initials={c.displayName.charAt(0)}
+                    size="sm"
+                    tone="navy"
+                  />
+                  <Typography.Heading level={3} style={{ marginLeft: spacing.sm }}>
+                    {c.displayName}
+                  </Typography.Heading>
+                  <View style={{ flex: 1 }} />
+                  <Chip
+                    tone="warning"
+                    label={`${rows.length} pending`}
+                    size="sm"
+                    filled
+                  />
                 </View>
-                <View style={styles.metaChip}>
-                  <Text style={styles.metaChipText}>🪙 {t.suggestedCoins}</Text>
+                <View style={{ gap: spacing.xs, marginTop: spacing.sm }}>
+                  {rows.map((row) => (
+                    <View key={row.id} style={styles.assignmentRow}>
+                      <Icon name="mail" size={14} color={colors.amberDeep} />
+                      <Typography.Body
+                        numberOfLines={1}
+                        style={{ flex: 1, marginLeft: 8 }}
+                      >
+                        {row.mission.title}
+                      </Typography.Body>
+                      <Chip
+                        tone="warning"
+                        label="SUBMITTED"
+                        size="sm"
+                        filled={false}
+                      />
+                    </View>
+                  ))}
                 </View>
-              </View>
-            </View>
+              </Surface>
+            );
+          })}
+        </View>
+      )}
+
+      <View style={{ marginTop: spacing.xl }}>
+        <SectionHeader
+          title="Recent missions"
+          subtitle="Quests you've created or assigned."
+        />
+        {recentMissions.length === 0 ? (
+          <Surface variant="cream" padding="lg" radius="lg">
+            <EmptyState
+              title="No missions yet"
+              body="Pick a template and assign your first quest above."
+            />
+          </Surface>
+        ) : (
+          <View style={{ gap: spacing.sm }}>
+            {recentMissions.map((m) => (
+              <Surface
+                key={m.id}
+                variant="card"
+                padding="md"
+                radius="lg"
+                shadow="card"
+              >
+                <View style={styles.missionRow}>
+                  <View style={{ flex: 1 }}>
+                    <Typography.Body emphasis numberOfLines={1}>
+                      {m.title}
+                    </Typography.Body>
+                    <View style={[styles.chipRow, { marginTop: 6 }]}>
+                      {m.traitCategory ? (
+                        <Chip
+                          tone={TRAIT_TONE[m.traitCategory]}
+                          label={traitLabel(m.traitCategory)}
+                          size="sm"
+                          filled
+                        />
+                      ) : null}
+                      <Chip
+                        tone="neutral"
+                        label={(m._count?.assignments ?? 0) === 1
+                          ? '1 assignment'
+                          : `${m._count?.assignments ?? 0} assignments`}
+                        size="sm"
+                        filled={false}
+                      />
+                    </View>
+                  </View>
+                </View>
+              </Surface>
+            ))}
           </View>
-          {t.heroWisdom && (
-            <View style={styles.wisdomBlock}>
-              <Text style={styles.wisdomLabel}>Hero's Wisdom</Text>
-              <Text style={styles.wisdomText} numberOfLines={2}>
-                {t.heroWisdom}
-              </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+// =========================================================================
+// Assign-to-child bottom sheet
+// =========================================================================
+
+interface AssignSheetProps {
+  template: MissionTemplate | null;
+  children: ChildProfile[];
+  onClose: () => void;
+  onConfirm: (childProfileId: string) => void;
+  submitting: boolean;
+}
+
+function AssignSheet({
+  template,
+  children,
+  onClose,
+  onConfirm,
+  submitting,
+}: AssignSheetProps) {
+  return (
+    <Modal
+      visible={!!template}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalRoot}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={onClose} />
+        <View style={styles.sheet}>
+          <View style={styles.sheetHandle} />
+          <SectionHeader
+            title="Assign to a Hero"
+            subtitle={template?.title}
+          />
+          {children.length === 0 ? (
+            <Banner
+              tone="info"
+              icon="crown"
+              message="Add a Hero first from the Heroes tab."
+            />
+          ) : (
+            <View style={{ gap: spacing.sm }}>
+              {children.map((c) => (
+                <AnimatedPressable
+                  key={c.id}
+                  onPress={() => onConfirm(c.id)}
+                  disabled={submitting}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Assign to ${c.displayName}`}
+                >
+                  <Surface
+                    variant="cream"
+                    padding="md"
+                    radius="lg"
+                    shadow="card"
+                  >
+                    <View style={styles.heroPickRow}>
+                      <Avatar
+                        initials={c.displayName.charAt(0)}
+                        size="md"
+                        tone="navy"
+                      />
+                      <View style={{ flex: 1, marginLeft: spacing.md }}>
+                        <Typography.Heading level={3} numberOfLines={1}>
+                          {c.displayName}
+                        </Typography.Heading>
+                        {c.hero ? (
+                          <Typography.Caption tone="secondary">
+                            Level {c.hero.level} · {c.hero.coins} coins
+                          </Typography.Caption>
+                        ) : null}
+                      </View>
+                      <Icon
+                        name="chevronRight"
+                        size={18}
+                        color={colors.textSecondary}
+                      />
+                    </View>
+                  </Surface>
+                </AnimatedPressable>
+              ))}
             </View>
           )}
-          <TouchableOpacity style={styles.useBtn} onPress={() => onUse(t)}>
-            <Text style={styles.useBtnText}>Use this →</Text>
-          </TouchableOpacity>
-        </Card>
-      ))}
-    </View>
-  );
-}
-
-// =========================================================================
-// My Missions tab
-// =========================================================================
-
-function MyMissionsTab({
-  missions,
-  isLoading,
-}: {
-  missions: { id: string; title: string; category: string; traitCategory: TraitCategory | null; status: string; _count?: { assignments: number } }[];
-  isLoading: boolean;
-}) {
-  if (isLoading) return <Text style={styles.empty}>Loading…</Text>;
-  if (missions.length === 0) {
-    return <Text style={styles.empty}>No missions yet — create one from Templates or Create.</Text>;
-  }
-  return (
-    <View>
-      {missions.map((m) => (
-        <Card key={m.id} variant="elevated" padding="md" style={{ marginBottom: spacing.sm }}>
-          <Text style={styles.tplTitle}>{m.title}</Text>
-          <View style={styles.tplChipRow}>
-            <TraitChip trait={m.traitCategory} />
-            <View style={styles.metaChip}>
-              <Text style={styles.metaChipText}>{m.category}</Text>
-            </View>
-            <View style={styles.metaChip}>
-              <Text style={styles.metaChipText}>{m.status}</Text>
-            </View>
-            {m._count && (
-              <View style={styles.metaChip}>
-                <Text style={styles.metaChipText}>{m._count.assignments} assigned</Text>
-              </View>
-            )}
-          </View>
-        </Card>
-      ))}
-    </View>
-  );
-}
-
-// =========================================================================
-// Create tab
-// =========================================================================
-
-interface CreateProps {
-  title: string;
-  setTitle: (v: string) => void;
-  description: string;
-  setDescription: (v: string) => void;
-  category: MissionCategory;
-  setCategory: (v: MissionCategory) => void;
-  trait: TraitCategory;
-  setTrait: (v: TraitCategory) => void;
-  heroWisdom: string;
-  setHeroWisdom: (v: string) => void;
-  xpReward: number;
-  setXpReward: (v: number) => void;
-  coinReward: number;
-  setCoinReward: (v: number) => void;
-  childProfileId: string | null;
-  setChildProfileId: (v: string | null) => void;
-  children: { id: string; displayName: string }[];
-  formError: string | null;
-  submitting: boolean;
-  onSubmit: () => void;
-}
-
-function CreateTab(p: CreateProps) {
-  return (
-    <View>
-      <Input
-        label="Title"
-        placeholder="e.g., Tidy your room"
-        value={p.title}
-        onChangeText={p.setTitle}
-        maxLength={120}
-      />
-      <Text style={styles.charCount}>{p.title.length}/120</Text>
-
-      <Input
-        label="Description (optional)"
-        placeholder="Add detail your hero will see…"
-        value={p.description}
-        onChangeText={p.setDescription}
-        multiline
-        numberOfLines={3}
-        maxLength={500}
-        style={{ minHeight: 70, textAlignVertical: 'top' }}
-      />
-
-      <Text style={styles.fieldLabel}>Category</Text>
-      <View style={styles.chipWrap}>
-        {CATEGORIES.map((c) => (
-          <TouchableOpacity
-            key={c.id}
-            style={[styles.optChip, p.category === c.id && styles.optChipActive]}
-            onPress={() => p.setCategory(c.id)}
+          <AnimatedPressable
+            onPress={onClose}
+            style={styles.sheetCancel}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
           >
-            <Text
-              style={[styles.optChipText, p.category === c.id && styles.optChipTextActive]}
-            >
-              {c.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <Text style={styles.fieldLabel}>Trait</Text>
-      <View style={styles.traitRow}>
-        {TRAIT_BUTTONS.map((t) => {
-          const active = p.trait === t.id;
-          return (
-            <TouchableOpacity
-              key={t.id}
-              style={[
-                styles.traitBtn,
-                {
-                  borderColor: traitColor(t.id),
-                  backgroundColor: active ? traitColor(t.id) : colors.surface,
-                },
-              ]}
-              onPress={() => p.setTrait(t.id)}
-            >
-              <Text style={styles.traitEmoji}>{t.emoji}</Text>
-              <Text
-                style={[
-                  styles.traitBtnLabel,
-                  { color: active ? colors.surface : traitColor(t.id) },
-                ]}
-              >
-                {traitLabel(t.id)}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <Text style={styles.fieldLabel}>Hero's Wisdom</Text>
-      <Text style={styles.helper}>A short lesson your child carries forward.</Text>
-      <View style={styles.wisdomInputWrap}>
-        <TextInput
-          style={styles.wisdomInput}
-          value={p.heroWisdom}
-          onChangeText={p.setHeroWisdom}
-          multiline
-          maxLength={280}
-          placeholder="e.g., Keeping your space tidy helps your mind focus."
-          placeholderTextColor={colors.textTertiary}
-        />
-        <Text style={styles.charCount}>{p.heroWisdom.length}/280</Text>
-      </View>
-
-      {/* Rewards */}
-      <View style={styles.rewardRow}>
-        <Stepper
-          label="XP"
-          value={p.xpReward}
-          min={1}
-          max={100}
-          onChange={p.setXpReward}
-          icon="⚡"
-        />
-        <Stepper
-          label="Coins"
-          value={p.coinReward}
-          min={1}
-          max={50}
-          onChange={p.setCoinReward}
-          icon="🪙"
-        />
-      </View>
-
-      <Text style={styles.fieldLabel}>Assign to (optional)</Text>
-      <View style={styles.chipWrap}>
-        <TouchableOpacity
-          style={[styles.optChip, p.childProfileId === null && styles.optChipActive]}
-          onPress={() => p.setChildProfileId(null)}
-        >
-          <Text
-            style={[
-              styles.optChipText,
-              p.childProfileId === null && styles.optChipTextActive,
-            ]}
-          >
-            Unassigned
-          </Text>
-        </TouchableOpacity>
-        {p.children.map((c) => (
-          <TouchableOpacity
-            key={c.id}
-            style={[styles.optChip, p.childProfileId === c.id && styles.optChipActive]}
-            onPress={() => p.setChildProfileId(c.id)}
-          >
-            <Text
-              style={[
-                styles.optChipText,
-                p.childProfileId === c.id && styles.optChipTextActive,
-              ]}
-            >
-              {c.displayName}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {p.formError && <Text style={styles.formError}>{p.formError}</Text>}
-
-      <Button
-        title="Create Mission"
-        onPress={p.onSubmit}
-        loading={p.submitting}
-        style={{ marginTop: spacing.md }}
-      />
-    </View>
+            <Typography.Body tone="secondary" emphasis>
+              Cancel
+            </Typography.Body>
+          </AnimatedPressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
 // =========================================================================
-// Sub-components
+// Styles
 // =========================================================================
-
-function TraitChip({ trait }: { trait: TraitCategory | null | undefined }) {
-  if (!trait) {
-    return (
-      <View style={[styles.traitChip, { backgroundColor: colors.background }]}>
-        <Text style={[styles.traitChipText, { color: colors.textSecondary }]}>No trait</Text>
-      </View>
-    );
-  }
-  return (
-    <View style={[styles.traitChip, { backgroundColor: traitColor(trait) }]}>
-      <Text style={styles.traitChipText}>{traitLabel(trait)}</Text>
-    </View>
-  );
-}
-
-function Stepper({
-  label,
-  value,
-  min,
-  max,
-  onChange,
-  icon,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  onChange: (v: number) => void;
-  icon: string;
-}) {
-  return (
-    <View style={styles.stepperBox}>
-      <Text style={styles.stepperLabel}>
-        {icon} {label}
-      </Text>
-      <View style={styles.stepperRowInner}>
-        <TouchableOpacity
-          style={styles.stepperBtn}
-          onPress={() => onChange(Math.max(min, value - 1))}
-        >
-          <Ionicons name="remove" size={16} color={colors.primary} />
-        </TouchableOpacity>
-        <Text style={styles.stepperValue}>{value}</Text>
-        <TouchableOpacity
-          style={styles.stepperBtn}
-          onPress={() => onChange(Math.min(max, value + 1))}
-        >
-          <Ionicons name="add" size={16} color={colors.primary} />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-
-  tabs: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  tab: { paddingVertical: 10, marginRight: spacing.md },
-  tabActive: {},
-  tabLabel: { fontFamily: fonts.semiBold, fontSize: 14, color: colors.textSecondary },
-  tabLabelActive: { color: colors.primary },
-  tabUnderline: {
-    height: 3,
-    width: '100%',
-    backgroundColor: colors.accent,
-    borderRadius: 2,
-    marginTop: 6,
-  },
-
-  empty: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    paddingVertical: spacing.lg,
-  },
-
-  // Template cards
-  tplHead: { flexDirection: 'row', alignItems: 'flex-start' },
-  tplTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.primary },
-  tplChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-  traitChip: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: borderRadius.sm },
-  traitChipText: { fontFamily: fonts.bold, fontSize: 11, color: colors.surface },
-  metaChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: borderRadius.sm,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  metaChipText: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.primary },
-
-  wisdomBlock: {
-    backgroundColor: '#F4E9D0',
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginTop: spacing.sm,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
-  },
-  wisdomLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 10,
-    color: colors.primary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-    marginBottom: 2,
-  },
-  wisdomText: { fontFamily: fonts.regular, fontSize: 13, color: colors.primary },
-
-  useBtn: { alignSelf: 'flex-end', marginTop: spacing.sm },
-  useBtnText: { fontFamily: fonts.bold, fontSize: 13, color: colors.accent },
-
-  // Form
-  fieldLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: colors.primary,
-    marginBottom: 6,
-    marginTop: spacing.sm,
-  },
-  helper: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginBottom: 6,
-  },
-  charCount: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textSecondary,
-    textAlign: 'right',
-    marginTop: -spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.sm },
-  optChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: borderRadius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-  },
-  optChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  optChipText: { fontFamily: fonts.semiBold, fontSize: 12, color: colors.primary },
-  optChipTextActive: { color: colors.surface },
-
-  traitRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
-  traitBtn: {
+  root: { flex: 1, backgroundColor: 'transparent' },
+  loading: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: borderRadius.lg,
-    borderWidth: 2,
-    alignItems: 'center',
-  },
-  traitEmoji: { fontSize: 22, marginBottom: 2 },
-  traitBtnLabel: { fontFamily: fonts.bold, fontSize: 12 },
-
-  wisdomInputWrap: {
-    backgroundColor: '#F4E9D0',
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.accent,
-    marginBottom: spacing.sm,
-  },
-  wisdomInput: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.primary,
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-
-  rewardRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-  stepperBox: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.lg,
-    padding: spacing.sm,
-    ...shadows.sm,
-  },
-  stepperLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginBottom: 6,
-  },
-  stepperRowInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  stepperBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
   },
-  stepperValue: { fontFamily: fonts.extraBold, fontSize: 18, color: colors.primary },
-
-  formError: {
-    color: colors.error,
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
+  scroll: { paddingBottom: FLOATING_TAB_BAR_SCREEN_PADDING },
+  bannerWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  headerRow: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  segmentWrap: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  segmentRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  segmentSlot: { flexShrink: 0 },
+  segmentChip: { paddingVertical: 8, paddingHorizontal: spacing.md },
+  section: {
+    paddingHorizontal: spacing.lg,
     marginTop: spacing.sm,
+  },
+  traitBlock: { marginBottom: spacing.lg },
+  traitHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  traitSwatch: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  templateHead: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: spacing.sm,
+  },
+  templateActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: spacing.md,
+  },
+  assignBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.pill,
+    backgroundColor: colors.primary,
+  },
+  assignBtnDisabled: { opacity: 0.4 },
+  childHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  assignmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  missionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,27,61,0.45)',
+  } as ViewStyle,
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xl,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: spacing.sm,
+  },
+  heroPickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sheetCancel: {
+    marginTop: spacing.md,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
   },
 });

@@ -1,17 +1,16 @@
 /**
- * Mission Completion Sheet — M5a.
+ * Mission Completion Sheet — Polish-B2.
  *
- * Three-state bottom sheet:
- *   1. COMPOSE   — optional photo + optional notes + "I did it!" submit.
- *   2. SUBMITTING — uploads photo (if any) then posts submission.
- *   3. SUCCESS   — happy confirmation; tap Done to dismiss.
- *
- * After a successful submission we invalidate `assignments.mine`,
- * `assignments.detail(id)`, and `creature.me` so the mission list, the
- * detail screen, and the Hub all reflect SUBMITTED.
- *
- * Errors at any step show an inline banner with a Retry button. The user
- * may dismiss the sheet at any time before the submission lands.
+ * Functional flow preserved (compose → submitting → success). Visual
+ * upgrades:
+ *  - Sheet content wrapped in Surface(cream) with navyGlow shadow.
+ *  - Display heading "I did it!".
+ *  - Photo preview framed by a parchment Surface ("golden frame").
+ *  - "Tap to retake" AnimatedPressable with camera Icon when no photo.
+ *  - Notes use Inter body font; char counter Caption.
+ *  - Submit is amber full-width pill.
+ *  - Success state: parchment Surface + checkCircle + Scroll line.
+ *  - Errors surface via <Banner tone="error"/>.
  */
 import React, { useState } from 'react';
 import {
@@ -20,12 +19,9 @@ import {
   Modal,
   Platform,
   StyleSheet,
-  Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -35,7 +31,21 @@ import {
   submissionsApi,
   uploadPhotoToPresignedUrl,
 } from '@/api';
-import { borderRadius, colors, fonts, shadows, spacing } from '@/theme';
+import {
+  AnimatedPressable,
+  Banner,
+  Caption,
+  Display,
+  Icon,
+  Surface,
+  Typography,
+} from '@/components/ui';
+import {
+  borderRadius,
+  colors,
+  spacing,
+  typographyTokens,
+} from '@/theme';
 
 type SheetState = 'compose' | 'submitting' | 'success';
 type Stage = 'idle' | 'uploading-photo' | 'posting-submission';
@@ -89,7 +99,6 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
   const submitMutation = useMutation({
     mutationFn: async () => {
       let photoUrls: string[] | undefined = undefined;
-
       if (photoUri) {
         setStage('uploading-photo');
         const presign = await storageApi.presign({ contentType: 'image/jpeg', ext: 'jpg' });
@@ -101,7 +110,6 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
         });
         photoUrls = [presign.publicUrl];
       }
-
       setStage('posting-submission');
       return submissionsApi.createSubmission({
         assignmentId,
@@ -137,40 +145,61 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
       onRequestClose={resetAndClose}
     >
       <View style={styles.backdrop}>
-        <TouchableOpacity
-          style={StyleSheet.absoluteFill}
-          activeOpacity={1}
+        <AnimatedPressable
+          style={StyleSheet.absoluteFill as any}
           onPress={() => state !== 'submitting' && resetAndClose()}
-        />
-        <View style={styles.sheet}>
+          haptic={null}
+          accessibilityLabel="Dismiss sheet"
+          accessibilityRole="button"
+        >
+          <View />
+        </AnimatedPressable>
+
+        <Surface variant="cream" radius="xl" padding="lg" shadow="navyGlow" style={styles.sheet as any}>
           <View style={styles.handle} />
 
           {state === 'compose' && (
             <>
-              <Text style={styles.title}>Tell your hero about it</Text>
-              <Text style={styles.subtitle}>
+              <Display tone="primary" align="center" style={styles.title}>I did it!</Display>
+              <Caption tone="secondary" align="center" style={styles.subtitle}>
                 Add a photo or a quick note — both are optional.
-              </Text>
+              </Caption>
 
-              {/* Photo picker */}
               {photoUri ? (
-                <View style={styles.photoWrap}>
-                  <Image source={{ uri: photoUri }} style={styles.photo} />
-                  <TouchableOpacity
-                    style={styles.photoRemove}
-                    onPress={() => setPhotoUri(null)}
-                  >
-                    <Ionicons name="close" size={18} color={colors.white} />
-                  </TouchableOpacity>
-                </View>
+                <Surface variant="parchment" radius="md" padding="sm" shadow="parchment" bordered style={styles.photoFrame as any}>
+                  <Image source={{ uri: photoUri }} style={styles.photo} accessibilityIgnoresInvertColors />
+                  <View style={styles.photoActions}>
+                    <AnimatedPressable
+                      onPress={pickPhoto}
+                      style={styles.photoActionBtn}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retake photo"
+                    >
+                      <Icon name="camera" size={16} color={colors.parchmentInk} />
+                      <Caption emphasis tone="onParchment">Retake</Caption>
+                    </AnimatedPressable>
+                    <AnimatedPressable
+                      onPress={() => setPhotoUri(null)}
+                      style={styles.photoActionBtn}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove photo"
+                    >
+                      <Caption emphasis tone="onParchment">Remove</Caption>
+                    </AnimatedPressable>
+                  </View>
+                </Surface>
               ) : (
-                <TouchableOpacity style={styles.photoPick} onPress={pickPhoto}>
-                  <Ionicons name="camera-outline" size={26} color={colors.primary} />
-                  <Text style={styles.photoPickTxt}>Add a photo</Text>
-                </TouchableOpacity>
+                <AnimatedPressable
+                  onPress={pickPhoto}
+                  style={styles.photoPick}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add a photo"
+                >
+                  <Icon name="camera" size={24} color={colors.primary} />
+                  <Typography.Body emphasis tone="primary">Add a photo</Typography.Body>
+                </AnimatedPressable>
               )}
 
-              {/* Notes */}
               <TextInput
                 style={styles.notes}
                 placeholder="What did you do? (optional)"
@@ -179,60 +208,75 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
                 maxLength={NOTES_MAX}
                 value={notes}
                 onChangeText={setNotes}
+                accessibilityLabel="Notes"
               />
-              <Text style={styles.charCount}>
+              <Caption tone="secondary" align="right" style={styles.charCount}>
                 {notes.length}/{NOTES_MAX}
-              </Text>
+              </Caption>
 
               {error && (
-                <View style={styles.errorBanner}>
-                  <Ionicons name="alert-circle" size={18} color={colors.error} />
-                  <Text style={styles.errorTxt}>{error}</Text>
+                <View style={styles.bannerWrap}>
+                  <Banner tone="error" message={error} />
                 </View>
               )}
 
               <View style={styles.actionRow}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={resetAndClose}>
-                  <Text style={styles.cancelTxt}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
-                  <Text style={styles.submitTxt}>I did it!</Text>
-                </TouchableOpacity>
+                <AnimatedPressable
+                  onPress={resetAndClose}
+                  style={styles.cancelBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cancel"
+                >
+                  <Typography.Heading level={3} tone="secondary">Not yet</Typography.Heading>
+                </AnimatedPressable>
+                <AnimatedPressable
+                  onPress={handleSubmit}
+                  style={styles.submitBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Submit"
+                >
+                  <Icon name="sparkle" size={18} color={colors.navyDeep} />
+                  <Typography.Heading level={2} tone="primary" style={styles.submitLabel}>
+                    I did it!
+                  </Typography.Heading>
+                </AnimatedPressable>
               </View>
             </>
           )}
 
           {state === 'submitting' && (
             <View style={styles.centerState}>
-              <ActivityIndicator size="large" color={colors.accent} />
-              <Text style={styles.stageLabel}>
+              <ActivityIndicator size="large" color={colors.amberDeep} />
+              <Typography.Heading level={2} tone="primary" style={styles.stageLabel}>
+                {stage === 'uploading-photo' ? 'Uploading photo…' : 'Sending to your hero…'}
+              </Typography.Heading>
+              <Caption tone="secondary" align="center">
                 {stage === 'uploading-photo'
-                  ? 'Uploading photo…'
-                  : 'Posting submission…'}
-              </Text>
-              <Text style={styles.stageHint}>
-                {stage === 'uploading-photo'
-                  ? 'Sending your photo to the vault'
-                  : 'Almost there'}
-              </Text>
+                  ? 'Holding your photo safe.'
+                  : 'Almost there.'}
+              </Caption>
             </View>
           )}
 
           {state === 'success' && (
-            <View style={styles.centerState}>
-              <View style={styles.successIcon}>
-                <Ionicons name="checkmark" size={42} color={colors.white} />
+            <Surface variant="parchment" radius="lg" padding="lg" shadow="parchment" bordered style={styles.successCard as any}>
+              <View style={styles.successIconRow}>
+                <Icon name="checkCircle" size={56} color={colors.success} />
               </View>
-              <Text style={styles.successTitle}>Sent to your hero!</Text>
-              <Text style={styles.successHint}>
+              <Typography.Scroll align="center" tone="onParchment" style={styles.successCopy}>
                 Your hero awaits your parent&apos;s verification.
-              </Text>
-              <TouchableOpacity style={styles.doneBtn} onPress={resetAndClose}>
-                <Text style={styles.doneTxt}>Done</Text>
-              </TouchableOpacity>
-            </View>
+              </Typography.Scroll>
+              <AnimatedPressable
+                onPress={resetAndClose}
+                style={styles.doneBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Done"
+              >
+                <Typography.Heading level={2} tone="primary" style={styles.submitLabel}>Done</Typography.Heading>
+              </AnimatedPressable>
+            </Surface>
           )}
-        </View>
+        </Surface>
       </View>
     </Modal>
   );
@@ -245,14 +289,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.xl + (Platform.OS === 'ios' ? spacing.md : 0),
-    minHeight: 360,
-    ...shadows.lg,
+    minHeight: 380,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
   handle: {
     width: 44,
@@ -262,18 +303,8 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: spacing.md,
   },
-  title: {
-    fontFamily: fonts.extraBold,
-    fontSize: 20,
-    color: colors.primary,
-  },
-  subtitle: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-    marginBottom: spacing.md,
-  },
+  title: { fontSize: 28 },
+  subtitle: { marginTop: 4, marginBottom: spacing.md },
 
   // Photo picker
   photoPick: {
@@ -282,74 +313,50 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: spacing.sm,
     paddingVertical: spacing.lg,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: borderRadius.md,
+    backgroundColor: colors.creamSoft,
+    borderRadius: borderRadius.lg,
     borderStyle: 'dashed',
     borderWidth: 1.5,
-    borderColor: colors.border,
+    borderColor: colors.amberSoft,
     marginBottom: spacing.md,
   },
-  photoPickTxt: {
-    fontFamily: fonts.semiBold,
-    fontSize: 15,
-    color: colors.primary,
-  },
-  photoWrap: {
-    height: 140,
-    borderRadius: borderRadius.md,
-    overflow: 'hidden',
+  photoFrame: {
     marginBottom: spacing.md,
   },
-  photo: { width: '100%', height: '100%' },
-  photoRemove: {
-    position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // Notes
-  notes: {
-    minHeight: 80,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    fontFamily: fonts.regular,
-    fontSize: 15,
-    color: colors.primary,
-    textAlignVertical: 'top',
-  },
-  charCount: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textSecondary,
-    textAlign: 'right',
-    marginTop: 4,
-  },
-
-  // Error banner
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginTop: spacing.sm,
-    padding: spacing.sm,
-    backgroundColor: colors.errorLight,
+  photo: {
+    width: '100%',
+    height: 180,
     borderRadius: borderRadius.sm,
   },
-  errorTxt: {
-    flex: 1,
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: colors.error,
+  photoActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
+  photoActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
   },
 
-  // Action row
+  notes: {
+    minHeight: 80,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    ...typographyTokens.body,
+    color: colors.primary,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  charCount: { marginTop: 4 },
+
+  bannerWrap: { marginTop: spacing.sm },
+
   actionRow: {
     flexDirection: 'row',
     marginTop: spacing.lg,
@@ -358,68 +365,38 @@ const styles = StyleSheet.create({
   cancelBtn: {
     flex: 1,
     paddingVertical: spacing.md,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.backgroundSecondary,
+    borderRadius: borderRadius.pill,
+    backgroundColor: colors.creamSoft,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  cancelTxt: { fontFamily: fonts.bold, fontSize: 15, color: colors.textSecondary },
   submitBtn: {
     flex: 2,
+    flexDirection: 'row',
+    gap: 6,
     paddingVertical: spacing.md,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.accent,
+    borderRadius: borderRadius.pill,
+    backgroundColor: colors.amberDeep,
     alignItems: 'center',
-    ...shadows.sm,
+    justifyContent: 'center',
   },
-  submitTxt: { fontFamily: fonts.extraBold, fontSize: 15, color: colors.primary },
+  submitLabel: { fontSize: 17, color: colors.navyDeep },
 
-  // Submitting / success center state
   centerState: {
     alignItems: 'center',
     paddingVertical: spacing.xl,
   },
-  stageLabel: {
-    fontFamily: fonts.bold,
-    fontSize: 16,
-    color: colors.primary,
-    marginTop: spacing.md,
-  },
-  stageHint: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-  successIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: colors.success,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.md,
-  },
-  successTitle: {
-    fontFamily: fonts.extraBold,
-    fontSize: 20,
-    color: colors.primary,
-    marginTop: spacing.md,
-  },
-  successHint: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    paddingHorizontal: spacing.md,
-  },
+  stageLabel: { marginTop: spacing.md },
+
+  successCard: { alignItems: 'center' },
+  successIconRow: { marginBottom: spacing.sm },
+  successCopy: { marginTop: spacing.xs, marginBottom: spacing.md, fontSize: 17 },
   doneBtn: {
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.xl,
+    width: '100%',
     paddingVertical: spacing.md,
-    backgroundColor: colors.accent,
-    borderRadius: borderRadius.md,
-    ...shadows.sm,
+    borderRadius: borderRadius.pill,
+    backgroundColor: colors.amberDeep,
+    alignItems: 'center',
   },
-  doneTxt: { fontFamily: fonts.extraBold, color: colors.primary, fontSize: 15 },
 });

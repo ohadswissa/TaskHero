@@ -24,8 +24,21 @@ config.transformer = {
   ],
 };
 
+// Path to the local Reanimated shim. We alias `react-native-reanimated` to this
+// shim because Reanimated 4's native worklets module crashes Expo Go on iOS
+// (SDK 54) at module-eval time. The shim provides API-compatible stubs backed
+// by React Native's built-in Animated module so the app boots inside Expo Go.
+const REANIMATED_SHIM = path.resolve(projectRoot, 'src/shims/reanimated.ts');
+
 // Intercept React resolution BEFORE Metro's normal node_modules traversal.
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Redirect react-native-reanimated (and its deep imports) to our shim.
+  if (
+    moduleName === 'react-native-reanimated' ||
+    moduleName.startsWith('react-native-reanimated/')
+  ) {
+    return { type: 'sourceFile', filePath: REANIMATED_SHIM };
+  }
   if (
     moduleName === 'react' ||
     moduleName === 'react-dom' ||

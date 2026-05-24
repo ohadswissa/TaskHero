@@ -49,6 +49,7 @@ export const queryKeys = {
   // ---------- Approvals (parent) ----------
   approvals: {
     pending: ['approvals', 'pending'] as const,
+    todayStats: ['approvals', 'stats', 'today'] as const,
   },
 
   // ---------- Progression / traits ----------

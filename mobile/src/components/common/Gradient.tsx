@@ -1,3 +1,10 @@
+/**
+ * @deprecated Polish-B3 — prefer `<GradientBackdrop>` from
+ * `@/components/ui` for new screens. This thin wrapper around
+ * `expo-linear-gradient` is retained because `Button` (primary/secondary
+ * variants) and `SpeciesBadge` still need the raw gradient component
+ * with custom colour stops.
+ */
 import React from 'react';
 import { LinearGradientProps } from 'expo-linear-gradient';
 

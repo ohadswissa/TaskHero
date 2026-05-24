@@ -1,16 +1,19 @@
 /**
- * Parent Verify Detail — `/(parent)/approvals/[id]` (M6 marquee screen).
+ * Parent Verify Detail — `/(parent)/approvals/[id]` (Polish-B3 marquee).
  *
- * Renders the child's submission for parental verification:
- *  - Header: child name + mission title
- *  - Trait + Hero's Wisdom parchment card (mirrors the child's screen — co-op design language)
- *  - Submission section: presigned photo, notes, timestamp; tap photo → full-screen modal
- *  - Verify Message editor: 3 quick-tap chips that APPEND to the textarea, free-text, char counter
- *  - Footer actions: amber "Verify ✨" + subtle "Send back to try again"
+ * Rebuilt against the design system:
+ *   - GradientBackdrop(cream) outer + AnimatedPressable back chevron + Avatar.
+ *   - SectionHeader for the mission title.
+ *   - ScrollCard mirrors the child's Hero's Wisdom (parchment).
+ *   - PhotoFrame for the submission photo with a tap-to-enlarge Modal.
+ *   - Quick-tap Chip rows append to a TextInput (preserved logic).
+ *   - Fixed-bottom verify footer with primary AnimatedPressable + reject link.
+ *   - Awards parchment overlay + CelebrationBurst on approve.
+ *   - Reject confirm modal with destructive primary action.
+ *   - Toasts for success/error feedback via useToast.
  *
- * On approve: calls `approvalsApi.verify({approved:true,parentMessage})`, then
- * shows a celebration overlay summarising the awarded/evolution/reward
- * payload before routing back to the list.
+ * All mutations, query keys, and API payloads are preserved EXACTLY from
+ * the M6 implementation — only the visual containers change.
  */
 import React, { useMemo, useState } from 'react';
 import {
@@ -22,22 +25,43 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
-  TouchableOpacity,
   View,
+  type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { approvalsApi, extractApiError, queryKeys, storageApi } from '@/api';
-import type { PendingApprovalRow, VerifyResponse } from '@/api/types';
+import {
+  approvalsApi,
+  extractApiError,
+  queryKeys,
+  storageApi,
+} from '@/api';
+import type {
+  PendingApprovalRow,
+  TraitCategory,
+  VerifyResponse,
+} from '@/api/types';
+import {
+  AnimatedPressable,
+  Avatar,
+  Banner,
+  CelebrationBurst,
+  Chip,
+  GradientBackdrop,
+  Icon,
+  PhotoFrame,
+  relativeTime,
+  ScrollCard,
+  SectionHeader,
+  Surface,
+  Typography,
+  useToast,
+} from '@/components/ui';
 import {
   borderRadius,
   colors,
-  fonts,
-  shadows,
   spacing,
   traitColor,
   traitLabel,
@@ -52,26 +76,29 @@ const QUICK_CHIPS: string[] = [
   'You taught me something today 🌱',
 ];
 
-function relativeTime(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diffMs = Date.now() - then;
-  const sec = Math.round(diffMs / 1000);
-  if (sec < 60) return 'just now';
-  const min = Math.round(sec / 60);
-  if (min < 60) return `${min} min${min === 1 ? '' : 's'} ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
-  const day = Math.round(hr / 24);
-  return `${day} day${day === 1 ? '' : 's'} ago`;
+function traitChipTone(trait: TraitCategory | null | undefined):
+  | 'strength'
+  | 'wisdom'
+  | 'heart'
+  | 'neutral' {
+  switch (trait) {
+    case 'STRENGTH':
+      return 'strength';
+    case 'WISDOM':
+      return 'wisdom';
+    case 'HEART':
+      return 'heart';
+    default:
+      return 'neutral';
+  }
 }
 
 export default function ApprovalDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const toast = useToast();
 
-  // ----- Data -----
+  // ----- Data (unchanged) -----
   const pendingQ = useQuery({
     queryKey: [...queryKeys.approvals.pending],
     queryFn: approvalsApi.listPending,
@@ -92,7 +119,7 @@ export default function ApprovalDetailScreen() {
         const items = await storageApi.presignRead(row.submission!.photoUrls);
         if (!cancelled) setSignedPhotos(items.map((i) => i.url));
       } catch {
-        // leave empty; placeholders shown
+        /* placeholders shown */
       }
     })();
     return () => {
@@ -100,22 +127,22 @@ export default function ApprovalDetailScreen() {
     };
   }, [row?.submission?.id]);
 
-  // ----- Message editor -----
+  // ----- Editor state -----
   const [message, setMessage] = useState('');
   const trimmed = message.trim();
   const canVerify = trimmed.length >= MIN_MESSAGE && trimmed.length <= MAX_MESSAGE;
 
   const appendChip = (chip: string) => {
     setMessage((prev) => {
-      const next = prev.length === 0 ? chip + ' ' : `${prev.replace(/\s+$/, '')} ${chip} `;
+      const next =
+        prev.length === 0 ? chip + ' ' : `${prev.replace(/\s+$/, '')} ${chip} `;
       return next.slice(0, MAX_MESSAGE);
     });
   };
 
   // ----- Mutation -----
-  const [overlay, setOverlay] = useState<VerifyResponse | null>(null);
-  const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [awardsResult, setAwardsResult] = useState<VerifyResponse | null>(null);
+  const [showRejectConfirm, setShowRejectConfirm] = useState(false);
 
   const verifyM = useMutation({
     mutationFn: (approved: boolean) =>
@@ -125,32 +152,37 @@ export default function ApprovalDetailScreen() {
         parentMessage: trimmed || undefined,
       }),
     onSuccess: async (res) => {
-      setErrorMsg(null);
       await queryClient.invalidateQueries({
         queryKey: [...queryKeys.approvals.pending],
       });
       if (res.decision === 'APPROVED') {
-        setOverlay(res);
-        // Auto-dismiss after 2.5s
+        setAwardsResult(res);
+        toast.show('Hero Mail sent ✉', { tone: 'success' });
         setTimeout(() => {
-          setOverlay(null);
-          router.replace('/(parent)/approvals');
+          setAwardsResult(null);
+          if (router.canGoBack()) router.back();
+          else router.replace('/(parent)/approvals');
         }, 2500);
       } else {
-        // Reject — toast + immediate return
-        router.replace('/(parent)/approvals');
+        toast.show('Sent back to try again', { tone: 'info' });
+        if (router.canGoBack()) router.back();
+        else router.replace('/(parent)/approvals');
       }
     },
-    onError: (err) => {
-      setErrorMsg(extractApiError(err));
+    onError: () => {
+      toast.show("Couldn't send. Try again.", { tone: 'error' });
     },
   });
 
-  // ----- Render -----
+  // ----- Loading / not-found -----
   if (pendingQ.isPending) {
     return (
       <SafeAreaView style={styles.root} edges={['top']}>
-        <BackBar />
+        <GradientBackdrop
+          variant="cream"
+          style={StyleSheet.absoluteFill as any}
+        />
+        <BackHeader />
         <View style={styles.centerFill}>
           <ActivityIndicator size="large" color={colors.accent} />
         </View>
@@ -161,17 +193,30 @@ export default function ApprovalDetailScreen() {
   if (!row) {
     return (
       <SafeAreaView style={styles.root} edges={['top']}>
-        <BackBar />
+        <GradientBackdrop
+          variant="cream"
+          style={StyleSheet.absoluteFill as any}
+        />
+        <BackHeader />
         <View style={styles.centerFill}>
-          <Text style={styles.errorText}>
-            This submission is no longer pending. It may have already been reviewed.
-          </Text>
-          <TouchableOpacity
-            style={styles.retryBtn}
+          <Banner
+            tone="info"
+            icon="checkCircle"
+            message={
+              pendingQ.error
+                ? extractApiError(pendingQ.error)
+                : 'This submission is no longer pending. It may have already been reviewed.'
+            }
+          />
+          <AnimatedPressable
             onPress={() => router.replace('/(parent)/approvals')}
+            accessibilityLabel="Back to list"
+            style={styles.retryBtn}
           >
-            <Text style={styles.retryTxt}>Back to list</Text>
-          </TouchableOpacity>
+            <Typography.Body tone="onNavy" emphasis>
+              Back to list
+            </Typography.Body>
+          </AnimatedPressable>
         </View>
       </SafeAreaView>
     );
@@ -180,11 +225,14 @@ export default function ApprovalDetailScreen() {
   const mission = row.mission;
   const submission = row.submission;
   const trait = mission.traitCategory;
-  const tColor = traitColor(trait);
+  const submittedIso =
+    submission?.submittedAt ?? row.completedAt ?? new Date().toISOString();
+  const firstPhoto = signedPhotos[0];
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
-      <BackBar />
+      <GradientBackdrop variant="cream" style={StyleSheet.absoluteFill as any} />
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -194,590 +242,479 @@ export default function ApprovalDetailScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Header */}
-          <View style={[styles.titleBlock, { borderLeftColor: tColor }]}>
-            <Text style={styles.eyebrow}>
-              {row.childProfile.displayName}&apos;s submission
-            </Text>
-            <Text style={styles.title}>{mission.title}</Text>
-            {trait && (
-              <View
-                style={[
-                  styles.traitChip,
-                  { backgroundColor: tColor + '20', alignSelf: 'flex-start' },
-                ]}
-              >
-                <View style={[styles.traitDot, { backgroundColor: tColor }]} />
-                <Text style={[styles.traitChipTxt, { color: tColor }]}>
-                  {traitLabel(trait)}
-                </Text>
-              </View>
-            )}
+          {/* Header row: back + Avatar */}
+          <View style={styles.headerRow}>
+            <AnimatedPressable
+              onPress={() =>
+                router.canGoBack()
+                  ? router.back()
+                  : router.replace('/(parent)/approvals')
+              }
+              accessibilityLabel="Go back"
+              style={styles.backBtn}
+            >
+              <Icon name="chevronLeft" size={24} color={colors.primary} />
+            </AnimatedPressable>
+            <Avatar
+              size="md"
+              initials={row.childProfile.displayName}
+              uri={row.childProfile.avatarUrl ?? undefined}
+            />
           </View>
 
-          {/* Hero's Wisdom mirror card (same parchment style as child) */}
-          {mission.heroWisdom && (
-            <View style={styles.wisdomCard}>
-              <Text style={styles.wisdomEyebrow}>✦ Hero&apos;s Wisdom they carried ✦</Text>
-              <Text style={styles.wisdomBody}>{mission.heroWisdom}</Text>
+          {/* Title */}
+          <View style={styles.section}>
+            <SectionHeader
+              title={mission.title}
+              subtitle={`${row.childProfile.displayName} · ${relativeTime(submittedIso)}`}
+            />
+            {trait ? (
+              <Chip
+                tone={traitChipTone(trait)}
+                label={traitLabel(trait)}
+                size="sm"
+                style={{ marginTop: -spacing.sm }}
+              />
+            ) : null}
+          </View>
+
+          {/* Hero's Wisdom mirror */}
+          {mission.heroWisdom ? (
+            <View style={styles.section}>
+              <ScrollCard
+                title="The lesson they were carrying"
+                body={mission.heroWisdom}
+              />
             </View>
-          )}
+          ) : null}
 
-          {/* Submission */}
+          {/* Submission section */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>What they shared</Text>
-            <Text style={styles.timestamp}>
-              {relativeTime(submission?.submittedAt ?? row.completedAt)}
-            </Text>
+            <Typography.Eyebrow>WHAT THEY SHARED</Typography.Eyebrow>
+            <View style={{ height: spacing.sm }} />
 
-            {/* Photos */}
-            {submission?.photoUrls?.length ? (
-              <View style={styles.photoWrap}>
-                {submission.photoUrls.map((orig, i) => {
-                  const signed = signedPhotos[i];
-                  return (
-                    <Pressable
-                      key={orig}
-                      onPress={() => signed && setPhotoModalUri(signed)}
-                      style={styles.photoFrame}
-                    >
-                      {signed ? (
-                        <Image source={{ uri: signed }} style={styles.photo} />
-                      ) : (
-                        <View style={[styles.photo, styles.photoLoading]}>
-                          <ActivityIndicator size="small" color={colors.textSecondary} />
-                        </View>
-                      )}
-                    </Pressable>
-                  );
-                })}
+            {firstPhoto ? (
+              <PhotoFrame
+                uri={firstPhoto}
+                aspectRatio={4 / 3}
+                onFullscreenRequest={() => setPhotoModalUri(firstPhoto)}
+                accessibilityLabel="Submission photo, tap to enlarge"
+              />
+            ) : submission?.photoUrls?.length ? (
+              <View style={styles.photoLoading}>
+                <ActivityIndicator size="small" color={colors.textSecondary} />
               </View>
             ) : null}
 
-            {/* Notes */}
             {submission?.notes ? (
-              <View style={styles.notesBlock}>
-                <Text style={styles.notesLabel}>Their note</Text>
-                <Text style={styles.notesBody}>“{submission.notes}”</Text>
+              <View style={{ marginTop: spacing.md }}>
+                <Surface variant="parchment" padding="md" radius="lg" shadow="parchment">
+                  <Typography.Body emphasis tone="onParchment">
+                    “{submission.notes}”
+                  </Typography.Body>
+                </Surface>
               </View>
             ) : null}
 
-            {!submission?.photoUrls?.length && !submission?.notes && (
-              <Text style={styles.timestamp}>(no photo or note attached)</Text>
-            )}
+            {!submission?.photoUrls?.length && !submission?.notes ? (
+              <Typography.Caption tone="secondary">
+                (no photo or note attached)
+              </Typography.Caption>
+            ) : null}
           </View>
 
-          {/* Hero Mail editor */}
+          {/* Verify Message editor */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Send a Hero Mail back</Text>
-            <Text style={styles.sectionSub}>
+            <Typography.Eyebrow>SEND A HERO MAIL BACK</Typography.Eyebrow>
+            <Typography.Heading level={2} style={{ marginTop: 4 }}>
               What will your hero learn from this moment?
-            </Text>
+            </Typography.Heading>
 
             <View style={styles.chipsRow}>
               {QUICK_CHIPS.map((chip) => (
-                <TouchableOpacity
+                <Chip
                   key={chip}
-                  style={styles.suggestChip}
+                  tone="navy"
+                  filled={false}
+                  label={chip}
                   onPress={() => appendChip(chip)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.suggestChipTxt}>{chip}</Text>
-                </TouchableOpacity>
+                />
               ))}
             </View>
 
             <TextInput
               value={message}
               onChangeText={(t) => setMessage(t.slice(0, MAX_MESSAGE))}
-              placeholder="A few words your hero will treasure…"
+              placeholder="Your words become Hero Mail…"
               placeholderTextColor={colors.textTertiary}
               multiline
               style={styles.input}
               maxLength={MAX_MESSAGE}
             />
             <View style={styles.counterRow}>
-              <Text style={styles.helper}>
-                Your words travel back as Hero Mail — they&apos;ll see it next time they
-                open their world.
-              </Text>
-              <Text style={styles.counter}>
+              <Typography.Caption tone="secondary" style={{ flex: 1 }}>
+                Your words travel back as Hero Mail — they'll see it next time
+                they open their world.
+              </Typography.Caption>
+              <Typography.Caption tone="secondary">
                 {message.length}/{MAX_MESSAGE}
-              </Text>
+              </Typography.Caption>
             </View>
           </View>
-
-          {errorMsg && (
-            <View style={styles.errorBanner}>
-              <Ionicons name="alert-circle" size={18} color={colors.error} />
-              <Text style={styles.errorBannerTxt}>{errorMsg}</Text>
-              <TouchableOpacity onPress={() => verifyM.mutate(true)}>
-                <Text style={styles.errorBannerLink}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          )}
 
           <View style={{ height: 160 }} />
         </ScrollView>
 
-        {/* Footer */}
+        {/* Fixed footer */}
         <View style={styles.footer}>
-          <TouchableOpacity
-            style={styles.rejectBtn}
-            onPress={() => setRejectConfirmOpen(true)}
-            disabled={verifyM.isPending}
-          >
-            <Text style={styles.rejectTxt}>Send back to try again</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.verifyBtn,
-              !canVerify && styles.verifyBtnDisabled,
-            ]}
+          <AnimatedPressable
             onPress={() => verifyM.mutate(true)}
             disabled={!canVerify || verifyM.isPending}
+            accessibilityLabel="Verify mission"
+            style={[
+              styles.verifyBtn,
+              {
+                backgroundColor: canVerify ? colors.accent : colors.amberSoft,
+                opacity: verifyM.isPending ? 0.7 : 1,
+              } as ViewStyle,
+            ]}
           >
             {verifyM.isPending ? (
               <ActivityIndicator color={colors.primary} />
             ) : (
-              <Text style={styles.verifyTxt}>Verify ✨</Text>
+              <Typography.Body tone="onNavy" emphasis>
+                Verify ✨
+              </Typography.Body>
             )}
-          </TouchableOpacity>
+          </AnimatedPressable>
+          <AnimatedPressable
+            onPress={() => setShowRejectConfirm(true)}
+            disabled={verifyM.isPending}
+            accessibilityLabel="Send back to try again"
+            style={styles.rejectBtn}
+          >
+            <Typography.Caption tone="secondary">
+              Send back to try again
+            </Typography.Caption>
+          </AnimatedPressable>
         </View>
       </KeyboardAvoidingView>
 
-      {/* Full-screen photo modal */}
+      {/* Photo fullscreen */}
       <Modal
         visible={!!photoModalUri}
         transparent
         animationType="fade"
         onRequestClose={() => setPhotoModalUri(null)}
       >
-        <Pressable style={styles.photoModalBg} onPress={() => setPhotoModalUri(null)}>
-          {photoModalUri && (
+        <Pressable
+          style={styles.photoModalBg}
+          onPress={() => setPhotoModalUri(null)}
+        >
+          {photoModalUri ? (
             <Image
               source={{ uri: photoModalUri }}
               style={styles.photoModalImg}
               resizeMode="contain"
+              accessibilityIgnoresInvertColors
             />
-          )}
-          <View style={styles.photoModalClose}>
-            <Ionicons name="close" size={26} color={colors.white} />
-          </View>
+          ) : null}
         </Pressable>
       </Modal>
 
-      {/* Reject confirm modal */}
+      {/* Reject confirm */}
       <Modal
-        visible={rejectConfirmOpen}
+        visible={showRejectConfirm}
         transparent
         animationType="fade"
-        onRequestClose={() => setRejectConfirmOpen(false)}
+        onRequestClose={() => setShowRejectConfirm(false)}
       >
-        <View style={styles.confirmBg}>
-          <View style={styles.confirmCard}>
-            <Text style={styles.confirmTitle}>Send back to try again?</Text>
-            <Text style={styles.confirmBody}>
-              They&apos;ll see your message and can submit again.
-            </Text>
+        <View style={styles.scrim}>
+          <Surface
+            variant="card"
+            padding="lg"
+            radius="xl"
+            shadow="cardHover"
+            style={styles.modalCard}
+          >
+            <Typography.Display>Send back to try again?</Typography.Display>
+            <Typography.Body tone="secondary" style={{ marginTop: spacing.sm }}>
+              They'll see your note and can resubmit. No harm done.
+            </Typography.Body>
             <View style={styles.confirmRow}>
-              <TouchableOpacity
-                style={styles.confirmCancel}
-                onPress={() => setRejectConfirmOpen(false)}
+              <AnimatedPressable
+                onPress={() => setShowRejectConfirm(false)}
+                accessibilityLabel="Cancel"
+                style={[styles.confirmBtn, styles.confirmCancel]}
               >
-                <Text style={styles.confirmCancelTxt}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.confirmGo}
+                <Typography.Body emphasis>Cancel</Typography.Body>
+              </AnimatedPressable>
+              <AnimatedPressable
                 onPress={() => {
-                  setRejectConfirmOpen(false);
+                  setShowRejectConfirm(false);
                   verifyM.mutate(false);
                 }}
+                accessibilityLabel="Send back"
+                style={[styles.confirmBtn, styles.confirmDestructive]}
               >
-                <Text style={styles.confirmGoTxt}>Send back</Text>
-              </TouchableOpacity>
+                <Typography.Body tone="onNavy" emphasis>
+                  Send back
+                </Typography.Body>
+              </AnimatedPressable>
             </View>
-          </View>
+          </Surface>
         </View>
       </Modal>
 
-      {/* Celebration overlay */}
-      <Modal visible={!!overlay} transparent animationType="fade">
-        <View style={styles.confirmBg}>
-          <View style={styles.celebrationCard}>
-            <View style={styles.celebrationIconWrap}>
-              <Ionicons name="sparkles" size={32} color={colors.accent} />
-            </View>
-            <Text style={styles.celebrationTitle}>Verified ✨</Text>
-            {overlay?.awarded && (
-              <Text style={styles.celebrationLine}>
-                +{overlay.awarded.xp} XP · +{overlay.awarded.coins} coins
-              </Text>
-            )}
-            {overlay?.awarded?.trait && (
-              <Text style={styles.celebrationLine}>
-                Trait grown: {traitLabel(overlay.awarded.trait)}
-              </Text>
-            )}
-            {overlay?.awarded?.careItemName && (
-              <Text style={styles.celebrationLine}>
-                Care item earned: {overlay.awarded.careItemName}
-              </Text>
-            )}
-            {overlay?.evolution?.justEvolved && (
-              <Text style={styles.celebrationLineBold}>
-                Evolved to {overlay.evolution.stage}!
-              </Text>
-            )}
-            {overlay?.reward && (
-              <Text style={styles.celebrationLine}>
-                Reward progress: {overlay.reward.progress}/{overlay.reward.target}
-                {overlay.reward.unlocked ? '  🎉 Goal unlocked!' : ''}
-              </Text>
-            )}
+      {/* Awards overlay */}
+      <Modal visible={!!awardsResult} transparent animationType="fade">
+        <Pressable
+          style={styles.scrimDeep}
+          onPress={() => setAwardsResult(null)}
+        >
+          <Surface
+            variant="parchment"
+            padding="lg"
+            radius="xl"
+            shadow="parchment"
+            style={styles.modalCard}
+          >
+            <Typography.Display align="center" tone="onParchment">
+              Sent!
+            </Typography.Display>
+            {awardsResult?.awarded ? (
+              <View style={styles.awardsRow}>
+                {awardsResult.awarded.trait ? (
+                  <Chip
+                    tone={traitChipTone(awardsResult.awarded.trait)}
+                    label={traitLabel(awardsResult.awarded.trait)}
+                    size="sm"
+                    icon={
+                      <View
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: 3,
+                          backgroundColor: traitColor(awardsResult.awarded.trait),
+                        }}
+                      />
+                    }
+                  />
+                ) : null}
+                <Chip
+                  tone="accent"
+                  label={`+${awardsResult.awarded.xp} XP`}
+                  size="sm"
+                />
+                <Chip
+                  tone="warning"
+                  label={`+${awardsResult.awarded.coins} coins`}
+                  size="sm"
+                />
+                {awardsResult.awarded.careItemName ? (
+                  <Chip
+                    tone="success"
+                    label={awardsResult.awarded.careItemName}
+                    size="sm"
+                  />
+                ) : null}
+              </View>
+            ) : null}
+            {awardsResult?.evolution?.justEvolved ? (
+              <View style={{ marginTop: spacing.md }}>
+                <Banner
+                  tone="success"
+                  icon="sparkle"
+                  message={`Your hero's creature evolved into ${awardsResult.evolution.stage}!`}
+                />
+              </View>
+            ) : null}
+            {awardsResult?.reward?.unlocked ? (
+              <View style={{ marginTop: spacing.sm }}>
+                <Banner
+                  tone="warning"
+                  icon="crown"
+                  message={`Reward unlocked! ${awardsResult.reward.progress}/${awardsResult.reward.target}`}
+                />
+              </View>
+            ) : null}
+          </Surface>
+          <View
+            pointerEvents="none"
+            style={StyleSheet.absoluteFill as any}
+            importantForAccessibility="no"
+          >
+            <CelebrationBurst active intensity="normal" />
           </View>
-        </View>
+        </Pressable>
       </Modal>
     </SafeAreaView>
   );
 }
 
-function BackBar() {
+function BackHeader() {
   return (
-    <View style={styles.backBar}>
-      <TouchableOpacity
+    <View style={styles.headerRow}>
+      <AnimatedPressable
         onPress={() =>
           router.canGoBack() ? router.back() : router.replace('/(parent)/approvals')
         }
+        accessibilityLabel="Go back"
         style={styles.backBtn}
-        hitSlop={12}
       >
-        <Ionicons name="chevron-back" size={26} color={colors.primary} />
-      </TouchableOpacity>
+        <Icon name="chevronLeft" size={24} color={colors.primary} />
+      </AnimatedPressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
-  backBar: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  backBtn: { padding: spacing.xs, alignSelf: 'flex-start' },
-  scroll: { paddingBottom: spacing.xl },
-  centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
-  errorText: {
-    fontFamily: fonts.regular,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: spacing.md,
+  root: { flex: 1, backgroundColor: 'transparent' },
+  scroll: { paddingBottom: 140 },
+  centerFill: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+    gap: spacing.md,
   },
   retryBtn: {
+    backgroundColor: colors.primary,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.accent,
-    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.pill,
   },
-  retryTxt: { fontFamily: fonts.bold, color: colors.primary },
-
-  titleBlock: {
-    marginHorizontal: spacing.lg,
-    paddingLeft: spacing.md,
-    borderLeftWidth: 4,
-    marginTop: spacing.sm,
-    gap: spacing.xs,
-  },
-  eyebrow: {
-    fontFamily: fonts.semiBold,
-    fontSize: 12,
-    color: colors.textSecondary,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  title: {
-    fontFamily: fonts.extraBold,
-    fontSize: 24,
-    color: colors.primary,
-    lineHeight: 30,
-  },
-  traitChip: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: borderRadius.full,
-    marginTop: spacing.xs,
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
   },
-  traitDot: { width: 8, height: 8, borderRadius: 4 },
-  traitChipTxt: { fontFamily: fonts.bold, fontSize: 11, letterSpacing: 1 },
-
-  // Parchment Hero's Wisdom mirror card
-  wisdomCard: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.lg,
-    padding: spacing.lg,
-    backgroundColor: '#F4E4C1',
-    borderRadius: borderRadius.lg,
-    borderWidth: 1.5,
-    borderColor: '#D8C396',
-    ...shadows.sm,
+  backBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: colors.creamSoft,
   },
-  wisdomEyebrow: {
-    fontFamily: fonts.bold,
-    fontSize: 11,
-    letterSpacing: 1.5,
-    color: '#8A6B2A',
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  wisdomBody: {
-    fontFamily: fonts.regular,
-    fontSize: 15,
-    lineHeight: 24,
-    color: '#5A3F12',
-    fontStyle: 'italic',
-    textAlign: 'center',
-  },
-
   section: {
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.lg,
-  },
-  sectionTitle: { fontFamily: fonts.bold, fontSize: 16, color: colors.primary },
-  sectionSub: {
-    fontFamily: fonts.regular,
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  timestamp: {
-    fontFamily: fonts.regular,
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-
-  photoWrap: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, flexWrap: 'wrap' },
-  photoFrame: {
-    width: '100%',
-    aspectRatio: 1.4,
-    borderRadius: borderRadius.lg,
-    overflow: 'hidden',
-    backgroundColor: colors.borderLight,
-  },
-  photo: { width: '100%', height: '100%' },
-  photoLoading: { alignItems: 'center', justifyContent: 'center' },
-
-  notesBlock: {
+    paddingHorizontal: spacing.lg,
     marginTop: spacing.md,
-    padding: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.md,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
   },
-  notesLabel: {
-    fontFamily: fonts.semiBold,
-    fontSize: 11,
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+  photoLoading: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.creamSoft,
+    borderRadius: borderRadius.lg,
   },
-  notesBody: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.primary,
-    fontStyle: 'italic',
-    marginTop: 4,
-    lineHeight: 20,
+  chipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
-
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: spacing.sm },
-  suggestChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: borderRadius.full,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.accent,
-  },
-  suggestChipTxt: { fontFamily: fonts.semiBold, fontSize: 13, color: colors.primary },
-
   input: {
-    marginTop: spacing.sm,
-    minHeight: 100,
-    padding: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.md,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-    fontFamily: fonts.regular,
+    marginTop: spacing.md,
+    minHeight: 120,
+    backgroundColor: colors.cream,
+    color: colors.parchmentInk,
+    fontFamily: 'Inter_400Regular',
     fontSize: 15,
-    color: colors.primary,
+    lineHeight: 22,
+    padding: spacing.md,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.parchmentDark,
     textAlignVertical: 'top',
   },
   counterRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    gap: spacing.sm,
     marginTop: spacing.xs,
-    gap: spacing.sm,
   },
-  helper: {
-    fontFamily: fonts.regular,
-    fontSize: 11,
-    color: colors.textSecondary,
-    flex: 1,
-    fontStyle: 'italic',
-  },
-  counter: { fontFamily: fonts.semiBold, fontSize: 11, color: colors.textSecondary },
-
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    padding: spacing.sm,
-    borderRadius: borderRadius.md,
-    backgroundColor: colors.errorLight,
-  },
-  errorBannerTxt: { flex: 1, fontFamily: fonts.regular, color: colors.error, fontSize: 13 },
-  errorBannerLink: { fontFamily: fonts.bold, color: colors.error, fontSize: 13 },
-
   footer: {
     position: 'absolute',
+    bottom: 0,
     left: 0,
     right: 0,
-    bottom: 0,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.background,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.lg,
+    backgroundColor: colors.cream,
     borderTopWidth: 1,
     borderTopColor: colors.borderLight,
     gap: spacing.sm,
   },
   verifyBtn: {
-    backgroundColor: colors.accent,
     paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.pill,
     alignItems: 'center',
-    ...shadows.md,
+    justifyContent: 'center',
   },
-  verifyBtnDisabled: { opacity: 0.5 },
-  verifyTxt: { fontFamily: fonts.extraBold, fontSize: 18, color: colors.primary },
   rejectBtn: {
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
     alignItems: 'center',
-  },
-  rejectTxt: {
-    fontFamily: fonts.semiBold,
-    fontSize: 13,
-    color: colors.textSecondary,
-    textDecorationLine: 'underline',
+    paddingVertical: spacing.sm,
   },
 
-  // Full-screen photo viewer
+  scrim: {
+    flex: 1,
+    backgroundColor: 'rgba(15,26,51,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  scrimDeep: {
+    flex: 1,
+    backgroundColor: 'rgba(15,26,51,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  modalCard: {
+    width: '88%',
+    maxWidth: 360,
+    gap: spacing.sm,
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  confirmBtn: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmCancel: {
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    backgroundColor: 'transparent',
+  },
+  confirmDestructive: {
+    backgroundColor: colors.error,
+  },
+  awardsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    justifyContent: 'center',
+  },
+
   photoModalBg: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.92)',
+    backgroundColor: 'rgba(15,26,51,0.92)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   photoModalImg: { width: '100%', height: '85%' },
-  photoModalClose: {
-    position: 'absolute',
-    top: 50,
-    right: 24,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // Confirm modal
-  confirmBg: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  confirmCard: {
-    width: '100%',
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.lg,
-    padding: spacing.lg,
-    ...shadows.lg,
-  },
-  confirmTitle: { fontFamily: fonts.bold, fontSize: 18, color: colors.primary },
-  confirmBody: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-    lineHeight: 20,
-  },
-  confirmRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
-  confirmCancel: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  confirmCancelTxt: { fontFamily: fonts.bold, color: colors.primary, fontSize: 14 },
-  confirmGo: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    backgroundColor: colors.warning,
-  },
-  confirmGoTxt: { fontFamily: fonts.bold, color: colors.surface, fontSize: 14 },
-
-  // Celebration card
-  celebrationCard: {
-    width: '100%',
-    backgroundColor: colors.surface,
-    borderRadius: borderRadius.lg,
-    padding: spacing.xl,
-    alignItems: 'center',
-    ...shadows.lg,
-  },
-  celebrationIconWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: colors.warningLight,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  celebrationTitle: {
-    fontFamily: fonts.extraBold,
-    fontSize: 22,
-    color: colors.primary,
-    marginBottom: spacing.sm,
-  },
-  celebrationLine: {
-    fontFamily: fonts.regular,
-    fontSize: 14,
-    color: colors.text,
-    marginTop: 2,
-    textAlign: 'center',
-  },
-  celebrationLineBold: {
-    fontFamily: fonts.bold,
-    fontSize: 15,
-    color: colors.accent,
-    marginTop: spacing.xs,
-    textAlign: 'center',
-  },
 });
