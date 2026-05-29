@@ -1,15 +1,13 @@
 /**
- * Child Rewards — Polish-B2 rebuild.
- *
- * Single source of truth: rewardsApi.getMyActiveReward (one active reward
- * goal at a time, per the demo backend). The legacy 6-card "coin shop"
- * mock has been removed — it no longer matches the data model.
+ * Child Rewards — Polish-B2 rebuild + Round-11 "more rewards" shelf.
  *
  * Layout:
  *  - Parchment GradientBackdrop.
  *  - SectionHeader "Your reward quest".
  *  - <ScrollCard/> wrapping the active reward narrative, plus a progress
  *    orb-band underneath. When unlocked, amber Redeem CTA.
+ *  - Secondary section: "More rewards to chase" — family-wide ACTIVE
+ *    rewards with per-child progress chips + Redeem CTA when unlocked.
  *  - <EmptyState/> when no active quest.
  */
 import React from 'react';
@@ -26,6 +24,7 @@ import {
   AnimatedPressable,
   Banner,
   Caption,
+  Chip,
   EmptyState,
   FLOATING_TAB_BAR_SCREEN_PADDING,
   GradientBackdrop,
@@ -37,7 +36,25 @@ import {
 import { ScrollCard } from '@/components/ui/ScrollCard';
 import { RewardCelebration } from '@/components/rewards/RewardCelebration';
 import { extractApiError, queryKeys, rewardsApi } from '@/api';
+import type { RewardWithProgress } from '@/api/types';
 import { borderRadius, colors, spacing } from '@/theme';
+
+function conditionLabel(r: RewardWithProgress): string {
+  switch (r.conditionType) {
+    case 'COIN_THRESHOLD':
+      return `${r.target} coins`;
+    case 'STREAK_DAYS':
+      return `${r.target}-day streak`;
+    case 'MISSION_COUNT':
+      return `${r.target} missions`;
+    case 'LEVEL_REACHED':
+      return `Level ${r.target}`;
+    case 'XP_THRESHOLD':
+      return `${r.target} XP`;
+    default:
+      return `${r.target}`;
+  }
+}
 
 export default function ChildRewardsScreen() {
   const queryClient = useQueryClient();
@@ -46,17 +63,23 @@ export default function ChildRewardsScreen() {
     queryFn: rewardsApi.getMyActiveReward,
     staleTime: 1000 * 30,
   });
+  const familyQuery = useQuery({
+    queryKey: queryKeys.rewards.mineFamily,
+    queryFn: rewardsApi.listMyFamilyRewards,
+    staleTime: 1000 * 30,
+  });
 
   const [celebrate, setCelebrate] = React.useState<string | null>(null);
 
   const redeem = useMutation({
-    mutationFn: (id: string) => rewardsApi.redeemReward(id),
-    onMutate: () => {
-      const name = rewardQuery.data?.name;
-      if (name) setCelebrate(name);
+    mutationFn: (vars: { id: string; name: string }) =>
+      rewardsApi.redeemReward(vars.id),
+    onMutate: (vars) => {
+      setCelebrate(vars.name);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.rewards.mineActive });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rewards.mineFamily });
       queryClient.invalidateQueries({ queryKey: queryKeys.rewards.family });
       queryClient.invalidateQueries({ queryKey: queryKeys.creature.me });
     },
@@ -66,6 +89,17 @@ export default function ChildRewardsScreen() {
   const pct = reward
     ? Math.min(100, Math.round((reward.progress / Math.max(1, reward.target)) * 100))
     : 0;
+
+  // Secondary list — exclude the active quest to avoid duplicate render.
+  const extras = React.useMemo<RewardWithProgress[]>(() => {
+    const all = familyQuery.data ?? [];
+    return all.filter((r) => !reward || r.id !== reward.id);
+  }, [familyQuery.data, reward]);
+
+  const onRefresh = React.useCallback(() => {
+    rewardQuery.refetch();
+    familyQuery.refetch();
+  }, [rewardQuery, familyQuery]);
 
   return (
     <GradientBackdrop variant="parchment" intensity="subtle">
@@ -82,8 +116,8 @@ export default function ChildRewardsScreen() {
         contentContainerStyle={styles.scroll}
         refreshControl={
           <RefreshControl
-            refreshing={rewardQuery.isRefetching}
-            onRefresh={() => rewardQuery.refetch()}
+            refreshing={rewardQuery.isRefetching || familyQuery.isRefetching}
+            onRefresh={onRefresh}
             tintColor={colors.amberDeep}
           />
         }
@@ -128,7 +162,7 @@ export default function ChildRewardsScreen() {
               </View>
               {reward.unlocked ? (
                 <AnimatedPressable
-                  onPress={() => redeem.mutate(reward.id)}
+                  onPress={() => redeem.mutate({ id: reward.id, name: reward.name })}
                   disabled={redeem.isPending}
                   style={styles.redeemBtn}
                   accessibilityRole="button"
@@ -151,6 +185,76 @@ export default function ChildRewardsScreen() {
                 </Caption>
               )}
             </Surface>
+          </View>
+        )}
+
+        {extras.length > 0 && (
+          <View style={styles.extrasSection}>
+            <View style={styles.extrasHeader}>
+              <SectionHeader
+                eyebrow="Shelf"
+                title="More rewards to chase"
+                subtitle="Keep stacking coins and streaks."
+              />
+            </View>
+            <View style={styles.extrasList}>
+              {extras.map((r) => {
+                const isPending = redeem.isPending && redeem.variables?.id === r.id;
+                return (
+                  <Surface
+                    key={r.id}
+                    variant="card"
+                    radius="lg"
+                    padding="md"
+                    shadow="card"
+                    style={styles.extraCard as any}
+                  >
+                    <View style={styles.extraTopRow}>
+                      <View style={styles.extraTextCol}>
+                        <Typography.Heading level={3} tone="primary">
+                          {r.name}
+                        </Typography.Heading>
+                        {r.description ? (
+                          <Caption tone="secondary" style={styles.extraDesc}>
+                            {r.description}
+                          </Caption>
+                        ) : null}
+                      </View>
+                      <Chip
+                        label={conditionLabel(r)}
+                        tone={r.unlocked ? 'success' : 'neutral'}
+                        size="sm"
+                      />
+                    </View>
+
+                    {r.unlocked ? (
+                      <AnimatedPressable
+                        onPress={() => redeem.mutate({ id: r.id, name: r.name })}
+                        disabled={redeem.isPending}
+                        style={styles.redeemBtnSm}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Redeem ${r.name}`}
+                      >
+                        {isPending ? (
+                          <ActivityIndicator size="small" color={colors.navyDeep} />
+                        ) : (
+                          <>
+                            <Icon name="sparkle" size={16} color={colors.navyDeep} />
+                            <Typography.Heading level={3} tone="primary" style={styles.redeemLabelSm}>
+                              Redeem ✨
+                            </Typography.Heading>
+                          </>
+                        )}
+                      </AnimatedPressable>
+                    ) : (
+                      <Caption tone="secondary" style={styles.lockedHint}>
+                        {r.progress}/{r.target} so far — keep going!
+                      </Caption>
+                    )}
+                  </Surface>
+                );
+              })}
+            </View>
           </View>
         )}
 
@@ -207,4 +311,34 @@ const styles = StyleSheet.create({
   },
   redeemLabel: { fontSize: 17, color: colors.navyDeep },
   almost: { marginTop: spacing.sm, opacity: 0.85 },
+
+  // Extras / "More rewards to chase"
+  extrasSection: { marginTop: spacing.lg },
+  extrasHeader: { paddingHorizontal: spacing.lg },
+  extrasList: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    gap: spacing.md,
+  },
+  extraCard: { gap: spacing.sm },
+  extraTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  extraTextCol: { flex: 1, gap: spacing.xs },
+  extraDesc: { opacity: 0.85 },
+  redeemBtnSm: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.amberDeep,
+    borderRadius: borderRadius.pill,
+  },
+  redeemLabelSm: { fontSize: 15, color: colors.navyDeep },
+  lockedHint: { marginTop: spacing.xs, opacity: 0.8 },
 });

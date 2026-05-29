@@ -44,6 +44,7 @@ export const queryKeys = {
   rewards: {
     family: ['rewards', 'family'] as const,
     mineActive: ['rewards', 'mine', 'active'] as const,
+    mineFamily: ['rewards', 'mine', 'family'] as const,
   },
 
   // ---------- Approvals (parent) ----------

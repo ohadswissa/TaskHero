@@ -23,6 +23,12 @@ export const rewardsApi = {
     return res.data;
   },
 
+  /** Child-role — all ACTIVE family rewards visible to the child with per-child progress. */
+  listMyFamilyRewards: async (): Promise<RewardWithProgress[]> => {
+    const res = await apiClient.get<RewardWithProgress[]>('/rewards/mine/family');
+    return res.data;
+  },
+
   redeemReward: async (id: string): Promise<Reward> => {
     const res = await apiClient.post<Reward>(`/rewards/${id}/redeem`);
     return res.data;

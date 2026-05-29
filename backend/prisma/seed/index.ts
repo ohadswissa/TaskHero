@@ -38,7 +38,7 @@ async function main() {
 
   console.log('\n✅ Database seeding completed!');
   console.log('\n📋 Demo Credentials:');
-  console.log('   Parent: demo@taskhero.app / Demo123!');
+  console.log('   Parent: maya@taskhero.app / Demo123!');
   console.log('   Child: Family Code: DEMO2024, PIN: 1234');
 }
 

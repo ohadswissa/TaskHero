@@ -18,6 +18,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Modal,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -25,6 +27,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   creaturesApi,
@@ -42,6 +45,11 @@ import type {
 import { useAuthStore } from '@/stores/authStore';
 import { CreatureScene } from '@/components/creature/CreatureScene';
 import { EvolutionOverlay } from '@/components/creature/EvolutionOverlay';
+import {
+  CreatureReaction,
+  useHappyHop,
+  type CreatureReactionKind,
+} from '@/components/creature/CreatureReaction';
 import { useCreatureEmotionWithTrigger } from '@/components/creature/useCreatureEmotion';
 import { RewardCelebration } from '@/components/rewards/RewardCelebration';
 import { SPECIES_DEFAULTS } from '@/constants/species';
@@ -50,6 +58,7 @@ import {
   Avatar,
   Banner,
   Caption,
+  CelebrationBurst,
   Chip,
   EmptyState,
   FLOATING_TAB_BAR_SCREEN_PADDING,
@@ -72,6 +81,17 @@ import {
 } from '@/theme';
 
 const TRAITS: TraitCategory[] = ['STRENGTH', 'WISDOM', 'HEART'];
+
+const GROOM_ITEMS: Array<{ slug: string; label: string; emoji: string }> = [
+  { slug: 'brush', label: 'Brush', emoji: '🪥' },
+  { slug: 'bath', label: 'Bath', emoji: '🛁' },
+  { slug: 'polish', label: 'Polish', emoji: '✨' },
+];
+const PLAY_ITEMS: Array<{ slug: string; label: string; emoji: string }> = [
+  { slug: 'tickle', label: 'Tickle', emoji: '🤭' },
+  { slug: 'tug', label: 'Tug rope', emoji: '🪢' },
+  { slug: 'hide', label: 'Hide & seek', emoji: '🙈' },
+];
 const TRAIT_ICON: Record<TraitCategory, IconName> = {
   STRENGTH: 'strength',
   WISDOM: 'wisdom',
@@ -148,8 +168,8 @@ export default function ChildHub() {
     ]).start();
   }
   const jiggleRotate = jiggle.interpolate({
-    inputRange: [-1, 0, 1],
-    outputRange: ['-3deg', '0deg', '3deg'],
+    inputRange: [-1, 0, 1, 2],
+    outputRange: ['-3deg', '0deg', '3deg', '360deg'],
   });
 
   // Trait pulse refs
@@ -165,6 +185,95 @@ export default function ChildHub() {
       Animated.timing(v, { toValue: 1.3, duration: 175, useNativeDriver: true }),
       Animated.timing(v, { toValue: 1, duration: 175, useNativeDriver: true }),
     ]).start();
+  }
+
+  // Floating "+N happy" delta + sparkle burst on feed
+  const [floatingDelta, setFloatingDelta] = useState<number | null>(null);
+  const [burstActive, setBurstActive] = useState(false);
+  // Client-only "bonus" happiness from grooming/play actions (no backend trip).
+  const [bonusHappiness, setBonusHappiness] = useState(0);
+
+  // Creature reaction overlay (emoji burst + happy-hop bounce). Bumping
+  // reactionKey re-fires the same kind. Distinct from CelebrationBurst.
+  const [reactionKind, setReactionKind] = useState<CreatureReactionKind | null>(null);
+  const [reactionKey, setReactionKey] = useState(0);
+  const happyHop = useHappyHop();
+
+  // Scroll-to-creature: ScrollView ref + measured Y of the sprite wrapper.
+  const scrollRef = useRef<ScrollView>(null);
+  const creatureYRef = useRef<number>(0);
+  function scrollToCreature() {
+    const y = Math.max(0, creatureYRef.current - 40);
+    scrollRef.current?.scrollTo({ y, animated: true });
+  }
+
+  function triggerCreatureReaction(kind: CreatureReactionKind) {
+    setReactionKind(kind);
+    setReactionKey((k) => k + 1);
+    happyHop.play(kind);
+    try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {
+      /* haptics may not be available in all runtimes */
+    }
+  }
+
+  function applyClientCareBoost(delta: number, eventKind: 'GROOM' | 'PLAY') {
+    scrollToCreature();
+    setBonusHappiness((b) => Math.min(100, b + delta));
+    setFloatingDelta(delta);
+    setBurstActive(true);
+    setTimeout(() => setBurstActive(false), 700);
+    triggerCreatureEvent('FED');
+    triggerCreatureReaction(eventKind);
+    if (eventKind === 'PLAY') {
+      // 360° spin reusing jiggle Animated.Value
+      jiggle.setValue(0);
+      Animated.timing(jiggle, { toValue: 2, duration: 600, useNativeDriver: true })
+        .start(() => jiggle.setValue(0));
+    }
+  }
+  const floatAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (floatingDelta == null) return;
+    floatAnim.setValue(0);
+    Animated.timing(floatAnim, {
+      toValue: 1,
+      duration: 800,
+      useNativeDriver: true,
+    }).start(() => setFloatingDelta(null));
+  }, [floatingDelta, floatAnim]);
+
+  // Child bell menu sheet
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  async function handleSignOut() {
+    if (signingOut) return;
+    console.log('[signout] handleSignOut: start');
+    setSigningOut(true);
+    // Close modals FIRST so they don't trap the gesture handler / overlay.
+    setConfirmLogout(false);
+    setMenuOpen(false);
+    // Navigate-first pattern: bounce to root WHILE still authenticated so the
+    // child group can unmount cleanly without the _layout auth gate racing
+    // with our own router.replace. The root index.tsx will then re-route
+    // (to /(auth)/login) once isAuthenticated flips.
+    console.log('[signout] navigating to /');
+    router.replace('/');
+    // Defer the actual auth-clear until after the route swap commits, then
+    // run it fire-and-forget so a slow/unreachable backend can't strand us
+    // on a half-torn-down screen.
+    setTimeout(() => {
+      console.log('[signout] firing logout() (deferred)');
+      logout()
+        .then(() => console.log('[signout] logout() resolved'))
+        .catch((e) => console.warn('[signout] logout() error', e))
+        .finally(() => {
+          console.log('[signout] complete');
+          setSigningOut(false);
+        });
+    }, 50);
   }
 
   // Toast for feed errors
@@ -199,6 +308,11 @@ export default function ChildHub() {
         setHappinessDisplay(next.happiness);
         if (traitBump) pulseTrait(traitBump);
         triggerCreatureEvent('FED');
+        scrollToCreature();
+        triggerCreatureReaction('TREAT');
+        setFloatingDelta(target?.happinessDelta ?? HAPPINESS_PER_CARE_ITEM);
+        setBurstActive(true);
+        setTimeout(() => setBurstActive(false), 700);
       }
       return { prev };
     },
@@ -249,6 +363,7 @@ export default function ChildHub() {
   }, [rewardUnlocked]);
 
   const [celebrateName, setCelebrateName] = useState<string | null>(null);
+  const [showHappinessInfo, setShowHappinessInfo] = useState(false);
   const redeem = useMutation({
     mutationFn: (id: string) => rewardsApi.redeemReward(id),
     onMutate: () => {
@@ -265,11 +380,6 @@ export default function ChildHub() {
   function refreshAll() {
     creatureQuery.refetch();
     rewardQuery.refetch();
-  }
-
-  async function handleLogout() {
-    await logout();
-    router.replace('/(auth)/child-login' as never);
   }
 
   if (creatureQuery.isPending) {
@@ -290,7 +400,7 @@ export default function ChildHub() {
   }
 
   const meta = SPECIES_DEFAULTS[creature.species];
-  const happinessPct = Math.max(0, Math.min(100, happinessDisplay));
+  const happinessPct = Math.max(0, Math.min(100, happinessDisplay + bonusHappiness));
   const care = (creature.pendingCareItems ?? []) as CareItem[];
 
   return (
@@ -301,6 +411,7 @@ export default function ChildHub() {
       >
         <SafeAreaView style={styles.safe} edges={['top']}>
           <ScrollView
+            ref={scrollRef}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scroll}
             refreshControl={
@@ -317,7 +428,7 @@ export default function ChildHub() {
                 <Avatar initials={heroInitials} size="md" tone="navy" />
                 <View style={styles.topGreeting}>
                   <Caption tone="secondary" emphasis style={styles.topEyebrow}>
-                    Hello, Hero
+                    Welcome back
                   </Caption>
                   <Typography.Heading level={2} tone="primary">
                     {heroName}
@@ -325,10 +436,11 @@ export default function ChildHub() {
                 </View>
               </View>
               <AnimatedPressable
-                onPress={handleLogout}
+                onPress={() => setMenuOpen(true)}
                 style={styles.bellBtn}
                 accessibilityRole="button"
-                accessibilityLabel="Sign out"
+                accessibilityLabel="Open menu"
+                haptic="light"
               >
                 <Icon name="bell" size={22} color={colors.primary} />
               </AnimatedPressable>
@@ -341,9 +453,18 @@ export default function ChildHub() {
               accessibilityRole="button"
               accessibilityLabel={`Tap your ${meta.displayName}`}
               style={styles.spriteWrap}
+              onLayout={(e) => {
+                creatureYRef.current = e.nativeEvent.layout.y;
+              }}
             >
               <Animated.View
-                style={{ transform: [{ translateY: bob }, { rotate: jiggleRotate }] }}
+                style={{
+                  transform: [
+                    { translateY: bob },
+                    { rotate: jiggleRotate },
+                    ...happyHop.transform,
+                  ],
+                }}
               >
                 <CreatureScene
                   species={creature.species}
@@ -354,11 +475,71 @@ export default function ChildHub() {
                   habitatVariant="subtle"
                 />
               </Animated.View>
+              {/* Sparkle burst when fed */}
+              <View style={styles.burstOverlay} pointerEvents="none">
+                <CelebrationBurst active={burstActive} intensity="subtle" durationMs={600} spread={120} />
+              </View>
+              {/* Per-action emoji reaction (treat/groom/play) */}
+              <View style={styles.burstOverlay} pointerEvents="none">
+                <CreatureReaction
+                  kind={reactionKind}
+                  triggerKey={reactionKey}
+                  width={220}
+                />
+              </View>
             </AnimatedPressable>
 
             {/* Stats row */}
             <View style={styles.statsRow}>
-              <OrbProgress value={happinessPct} size={56} color={colors.amberDeep} label="Happiness" />
+              <AnimatedPressable
+                onPress={() => setShowHappinessInfo(true)}
+                accessibilityRole="button"
+                accessibilityLabel="What is Happiness?"
+                haptic="light"
+                style={styles.happinessWrap}
+              >
+                <OrbProgress
+                  value={happinessPct}
+                  size={56}
+                  color={colors.amberDeep}
+                  label={null}
+                />
+                <Caption tone="secondary" emphasis align="center" style={styles.happinessCaption}>
+                  HAPPINESS
+                </Caption>
+                <View style={styles.happinessHelpBadge} pointerEvents="none">
+                  <Caption tone="onNavy" emphasis style={styles.happinessHelpText}>
+                    ?
+                  </Caption>
+                </View>
+                {/* Floating +N happy bubble */}
+                {floatingDelta != null && (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.floatingDelta,
+                      {
+                        opacity: floatAnim.interpolate({
+                          inputRange: [0, 0.2, 1],
+                          outputRange: [0, 1, 0],
+                        }),
+                        transform: [
+                          {
+                            translateY: floatAnim.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0, -40],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  >
+                    <Caption tone="accent" emphasis style={styles.floatingDeltaText}>
+                      +{floatingDelta}
+                    </Caption>
+                  </Animated.View>
+                )}
+              </AnimatedPressable>
               <View style={styles.statsCenter}>
                 <Typography.Display tone="primary" align="center" style={styles.creatureName}>
                   {creature.name}
@@ -366,14 +547,20 @@ export default function ChildHub() {
                 <Caption tone="secondary" align="center" style={styles.speciesLabel}>
                   {meta.displayName}
                 </Caption>
+                {creature.stage !== 'EGG' ? (
+                  <Caption tone="accent" emphasis align="center" style={styles.stageLevelCenter}>
+                    {stageLevel(creature.stage)}
+                  </Caption>
+                ) : null}
+                <View style={styles.stageChipWrap}>
+                  <Chip
+                    label={stageName(creature.stage)}
+                    tone="navy"
+                    size="sm"
+                  />
+                </View>
               </View>
-              <View style={styles.statsRight}>
-                <Chip
-                  label={stageLabel(creature.stage)}
-                  tone="navy"
-                  size="sm"
-                />
-              </View>
+              <View style={styles.statsRight} />
             </View>
 
             {/* Trait icons row */}
@@ -430,10 +617,10 @@ export default function ChildHub() {
               redeeming={redeem.isPending}
             />
 
-            {/* Care items */}
+            {/* Shelf 1: Treats — feed Sprout (backend-backed) */}
             <View style={styles.shelfBlock}>
               <Typography.Eyebrow tone="accent" style={styles.sectionEyebrow}>
-                Care items
+                🍓 Treats — feed Sprout
               </Typography.Eyebrow>
               {care.length === 0 ? (
                 <EmptyState
@@ -457,6 +644,54 @@ export default function ChildHub() {
                   ))}
                 </ScrollView>
               )}
+            </View>
+
+            {/* Shelf 2: Grooming — client-side flourish */}
+            <View style={styles.shelfBlock}>
+              <Typography.Eyebrow tone="accent" style={styles.sectionEyebrow}>
+                🪥 Grooming — keep Sprout fresh
+              </Typography.Eyebrow>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.shelfScroll}
+              >
+                {GROOM_ITEMS.map((g) => (
+                  <CareActionCard
+                    key={g.slug}
+                    label={g.label}
+                    emoji={g.emoji}
+                    iconName="heart"
+                    accent={traitColor('HEART')}
+                    deltaHappy={5}
+                    onAction={() => applyClientCareBoost(5, 'GROOM')}
+                  />
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Shelf 3: Play — client-side flourish */}
+            <View style={styles.shelfBlock}>
+              <Typography.Eyebrow tone="accent" style={styles.sectionEyebrow}>
+                🎮 Play — bond with Sprout
+              </Typography.Eyebrow>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.shelfScroll}
+              >
+                {PLAY_ITEMS.map((p) => (
+                  <CareActionCard
+                    key={p.slug}
+                    label={p.label}
+                    emoji={p.emoji}
+                    iconName="sparkle"
+                    accent={colors.magicViolet}
+                    deltaHappy={3}
+                    onAction={() => applyClientCareBoost(3, 'PLAY')}
+                  />
+                ))}
+              </ScrollView>
             </View>
 
             <View style={{ height: spacing.xl }} />
@@ -491,18 +726,147 @@ export default function ChildHub() {
               onComplete={() => setEvolutionEvent(null)}
             />
           )}
+
+          <Modal
+            visible={showHappinessInfo}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowHappinessInfo(false)}
+          >
+            <View style={styles.infoModalRoot}>
+              <Pressable
+                style={styles.infoBackdrop}
+                onPress={() => setShowHappinessInfo(false)}
+              />
+              <Surface
+                variant="card"
+                radius="lg"
+                padding="lg"
+                shadow="card"
+                style={styles.infoCard as any}
+              >
+                <Typography.Heading level={2} tone="primary" align="center">
+                  Happiness
+                </Typography.Heading>
+                <Typography.Body
+                  tone="secondary"
+                  align="center"
+                  style={styles.infoBody}
+                >
+                  This shows how happy {creature.name} is. It slowly drops over
+                  time — feed your creature with care items below to keep it
+                  high! At 100% your creature is fully content.
+                </Typography.Body>
+                <AnimatedPressable
+                  onPress={() => setShowHappinessInfo(false)}
+                  style={styles.infoBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Got it"
+                >
+                  <Typography.Heading level={3} tone="primary">
+                    Got it
+                  </Typography.Heading>
+                </AnimatedPressable>
+              </Surface>
+            </View>
+          </Modal>
+
+          {/* Child menu sheet (bell button) */}
+          <Modal
+            visible={menuOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setMenuOpen(false)}
+          >
+            <View style={styles.sheetRoot}>
+              <Pressable style={styles.infoBackdrop} onPress={() => setMenuOpen(false)} />
+              <Surface
+                variant="card"
+                radius="lg"
+                padding="lg"
+                shadow="card"
+                style={styles.sheetCard as any}
+              >
+                <Typography.Heading level={2} tone="primary" align="center">
+                  Hey, {heroName}
+                </Typography.Heading>
+                <View style={styles.sheetRowDisabled}>
+                  <Icon name="bell" size={20} color={colors.textSecondary} />
+                  <Typography.Body tone="secondary">Notifications</Typography.Body>
+                  <Caption tone="secondary" style={{ marginLeft: 'auto' }}>Soon</Caption>
+                </View>
+                <View style={styles.sheetSep} />
+                <AnimatedPressable
+                  onPress={() => setConfirmLogout(true)}
+                  style={styles.sheetRow}
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign out"
+                >
+                  <Icon name="chevronLeft" size={20} color={colors.error} />
+                  <Typography.Body emphasis style={{ color: colors.error }}>Sign out</Typography.Body>
+                </AnimatedPressable>
+              </Surface>
+            </View>
+          </Modal>
+
+          {/* Confirm sign-out */}
+          <Modal
+            visible={confirmLogout}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setConfirmLogout(false)}
+          >
+            <View style={styles.infoModalRoot}>
+              <Pressable style={styles.infoBackdrop} onPress={() => setConfirmLogout(false)} />
+              <Surface variant="card" radius="lg" padding="lg" shadow="card" style={styles.infoCard as any}>
+                <Typography.Heading level={2} tone="primary" align="center">
+                  Sign out?
+                </Typography.Heading>
+                <Typography.Body tone="secondary" align="center" style={styles.infoBody}>
+                  You&apos;ll need your family code + PIN to come back.
+                </Typography.Body>
+                <View style={styles.confirmRow}>
+                  <AnimatedPressable
+                    onPress={() => setConfirmLogout(false)}
+                    style={[styles.infoBtn, styles.cancelBtn]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel"
+                  >
+                    <Typography.Heading level={3} tone="secondary">Stay</Typography.Heading>
+                  </AnimatedPressable>
+                  <AnimatedPressable
+                    onPress={handleSignOut}
+                    style={[styles.infoBtn, styles.dangerBtn]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Confirm sign out"
+                  >
+                    <Typography.Heading level={3} style={{ color: colors.white }}>Sign out</Typography.Heading>
+                  </AnimatedPressable>
+                </View>
+              </Surface>
+            </View>
+          </Modal>
         </SafeAreaView>
       </GradientBackdrop>
     </View>
   );
 }
 
-function stageLabel(stage: EvolutionStage): string {
+function stageLevel(stage: EvolutionStage): string {
+  switch (stage) {
+    case 'EGG': return '';
+    case 'BABY': return 'Level 1';
+    case 'ADOLESCENT': return 'Level 2';
+    case 'ADULT': return 'Level 3';
+  }
+}
+
+function stageName(stage: EvolutionStage): string {
   switch (stage) {
     case 'EGG': return 'Egg';
-    case 'BABY': return 'Lv 1 · Baby';
-    case 'ADOLESCENT': return 'Lv 2 · Adolescent';
-    case 'ADULT': return 'Lv 3 · Adult';
+    case 'BABY': return 'Baby';
+    case 'ADOLESCENT': return 'Adolescent';
+    case 'ADULT': return 'Adult';
   }
 }
 
@@ -567,6 +931,82 @@ function RewardGoal({
   );
 }
 
+function CareActionCard({
+  label,
+  emoji,
+  iconName,
+  accent,
+  deltaHappy,
+  onAction,
+}: {
+  label: string;
+  emoji: string;
+  iconName: IconName;
+  accent: string;
+  deltaHappy: number;
+  onAction: () => void;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const [spent, setSpent] = useState(false);
+  useEffect(() => {
+    if (!spent) return;
+    const id = setTimeout(() => setSpent(false), 900);
+    return () => clearTimeout(id);
+  }, [spent]);
+
+  function handlePress() {
+    if (spent) return;
+    setSpent(true);
+    scale.setValue(1);
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 1.18, duration: 140, useNativeDriver: true }),
+      Animated.timing(scale, { toValue: 1, duration: 160, useNativeDriver: true }),
+    ]).start();
+    onAction();
+  }
+
+  return (
+    <Animated.View style={{ transform: [{ scale }], marginRight: spacing.sm }}>
+      <AnimatedPressable
+        onPress={handlePress}
+        disabled={spent}
+        haptic="light"
+        accessibilityRole="button"
+        accessibilityLabel={label}
+      >
+        <Surface
+          variant="card"
+          radius="lg"
+          padding="sm"
+          shadow="card"
+          style={{ width: 116, alignItems: 'center', borderColor: accent + '55', borderWidth: 1 } as any}
+        >
+          <View
+            style={[
+              styles.careIcon,
+              { backgroundColor: accent + '22', borderColor: accent + '55' },
+            ]}
+          >
+            <Typography.Display tone="primary" align="center" style={styles.actionEmoji}>
+              {emoji}
+            </Typography.Display>
+          </View>
+          <Caption emphasis tone="primary" align="center" style={styles.careName} numberOfLines={1}>
+            {label}
+          </Caption>
+          <Caption emphasis style={{ color: accent, marginTop: 2 }}>
+            +{deltaHappy} happy
+          </Caption>
+          {/* Keep IconName import live for future glyph swap. */}
+          <View style={styles.hiddenIcon} pointerEvents="none">
+            <Icon name={iconName} size={1} color="transparent" />
+          </View>
+        </Surface>
+      </AnimatedPressable>
+    </Animated.View>
+  );
+}
+
 function CareCard({
   item,
   onFeed,
@@ -579,24 +1019,43 @@ function CareCard({
   const tColor = traitColor(item.traitCategory);
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const rotate = useRef(new Animated.Value(0)).current;
   const [spent, setSpent] = useState(false);
 
   function handlePress() {
     if (disabled || spent) return;
     setSpent(true);
     Animated.sequence([
-      Animated.timing(scale, { toValue: 1.15, duration: 160, useNativeDriver: true }),
+      // 1. Lift + rotate (180ms)
       Animated.parallel([
-        Animated.timing(scale, { toValue: 0, duration: 240, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0, duration: 240, useNativeDriver: true }),
+        Animated.timing(scale, { toValue: 1.2, duration: 180, useNativeDriver: true }),
+        Animated.timing(rotate, { toValue: -1, duration: 180, useNativeDriver: true }),
+      ]),
+      // 2. Fly toward creature: up + shrink + fade (350ms)
+      Animated.parallel([
+        Animated.timing(translateY, { toValue: -200, duration: 350, useNativeDriver: true }),
+        Animated.timing(scale, { toValue: 0.4, duration: 350, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0, duration: 350, useNativeDriver: true }),
       ]),
     ]).start(() => {
       onFeed();
     });
   }
 
+  const rotateStr = rotate.interpolate({
+    inputRange: [-1, 0],
+    outputRange: ['-6deg', '0deg'],
+  });
+
   return (
-    <Animated.View style={{ transform: [{ scale }], opacity, marginRight: spacing.sm }}>
+    <Animated.View
+      style={{
+        transform: [{ translateY }, { scale }, { rotate: rotateStr }],
+        opacity,
+        marginRight: spacing.sm,
+      }}
+    >
       <AnimatedPressable
         onPress={handlePress}
         disabled={disabled || spent}
@@ -679,8 +1138,101 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginTop: spacing.sm,
   },
-  statsCenter: { flex: 1, alignItems: 'center' },
-  statsRight: { width: 70, alignItems: 'flex-end' },
+  statsCenter: { flex: 1, alignItems: 'center', gap: 4 },
+  statsRight: { width: 56 },
+  stageLevel: { letterSpacing: 1 },
+  stageLevelCenter: { marginTop: 4, letterSpacing: 0.5 },
+  stageChipWrap: { alignSelf: 'center' },
+  burstOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  floatingDelta: {
+    position: 'absolute',
+    top: -8,
+    left: -8,
+    right: -8,
+    alignItems: 'center',
+  },
+  floatingDeltaText: { fontSize: 16 },
+  sheetRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheetCard: {
+    margin: spacing.lg,
+    marginBottom: spacing.xl,
+    gap: spacing.sm,
+  },
+  sheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+  },
+  sheetRowDisabled: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    opacity: 0.4,
+  },
+  sheetSep: {
+    height: 1,
+    backgroundColor: colors.borderLight,
+    marginVertical: spacing.xs,
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: colors.creamSoft,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 0,
+  },
+  dangerBtn: {
+    flex: 1,
+    backgroundColor: colors.error,
+    marginTop: 0,
+  },
+  happinessWrap: { position: 'relative' },
+  happinessHelpBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.navyDeep,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  happinessHelpText: { fontSize: 10, lineHeight: 12 },
+  infoModalRoot: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  infoBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15,27,61,0.45)',
+  },
+  infoCard: { width: '100%', maxWidth: 360, alignItems: 'stretch' },
+  infoBody: { marginTop: spacing.sm, lineHeight: 22 },
+  infoBtn: {
+    marginTop: spacing.lg,
+    alignSelf: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm + 2,
+    backgroundColor: colors.amberDeep,
+    borderRadius: borderRadius.pill,
+  },
   creatureName: {
     fontSize: 26,
   },
@@ -759,6 +1311,9 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   careName: { textTransform: 'capitalize' },
+  actionEmoji: { fontSize: 24, lineHeight: 28 },
+  hiddenIcon: { width: 0, height: 0, opacity: 0 },
+  happinessCaption: { marginTop: 4, letterSpacing: 1 },
 
   toastWrap: {
     position: 'absolute',

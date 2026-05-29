@@ -33,6 +33,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  TextInput,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -87,6 +88,7 @@ export default function ParentMissionsScreen() {
   const [segment, setSegment] = useState<Segment>('templates');
   const [refreshing, setRefreshing] = useState(false);
   const [assignTemplate, setAssignTemplate] = useState<MissionTemplate | null>(null);
+  const [customOpen, setCustomOpen] = useState(false);
 
   const templatesQ = useQuery({
     queryKey: [...queryKeys.missionTemplates.list],
@@ -163,6 +165,46 @@ export default function ParentMissionsScreen() {
       queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.pending] });
       toast.show(`"${mission.title}" assigned to ${childName}`, { tone: 'success' });
       setAssignTemplate(null);
+    },
+    onError: (err) => {
+      toast.show(extractApiError(err), { tone: 'error' });
+    },
+  });
+
+  const customMut = useMutation({
+    mutationFn: async (vars: {
+      title: string;
+      description: string;
+      traitCategory: TraitCategory;
+      xpReward: number;
+      coinReward: number;
+      heroWisdom?: string;
+      childProfileId: string;
+    }) => {
+      const mission = await missionsApi.createMission({
+        title: vars.title,
+        description: vars.description || vars.title,
+        category: 'DAILY_CHORE',
+        traitCategory: vars.traitCategory,
+        heroWisdom: vars.heroWisdom || undefined,
+        xpReward: vars.xpReward,
+        coinReward: vars.coinReward,
+      });
+      const assignment = await assignmentsApi.createAssignment({
+        missionId: mission.id,
+        childProfileId: vars.childProfileId,
+      });
+      return { mission, assignment };
+    },
+    onSuccess: ({ mission }, vars) => {
+      const childName =
+        children.find((c) => c.id === vars.childProfileId)?.displayName ?? 'your Hero';
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.missions.list] });
+      queryClient.invalidateQueries({ queryKey: [...queryKeys.approvals.pending] });
+      toast.show(`Custom quest "${mission.title}" assigned to ${childName}`, {
+        tone: 'success',
+      });
+      setCustomOpen(false);
     },
     onError: (err) => {
       toast.show(extractApiError(err), { tone: 'error' });
@@ -246,6 +288,21 @@ export default function ParentMissionsScreen() {
                 onPress={() => setSegment('assignments')}
               />
             </View>
+            {segment === 'templates' && children.length > 0 ? (
+              <View style={{ marginTop: spacing.sm, flexDirection: 'row' }}>
+                <AnimatedPressable
+                  onPress={() => setCustomOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Create custom quest"
+                  style={styles.customBtn}
+                >
+                  <Icon name="plus" size={16} color={colors.cream} />
+                  <Typography.Body tone="onNavy" emphasis style={{ marginLeft: 6 }}>
+                    Create custom
+                  </Typography.Body>
+                </AnimatedPressable>
+              </View>
+            ) : null}
           </View>
 
           {segment === 'templates' ? (
@@ -343,6 +400,14 @@ export default function ParentMissionsScreen() {
           assignMut.mutate({ template: assignTemplate, childProfileId })
         }
         submitting={assignMut.isPending}
+      />
+
+      <CustomMissionSheet
+        visible={customOpen}
+        children={children}
+        onClose={() => setCustomOpen(false)}
+        onSubmit={(payload) => customMut.mutate(payload)}
+        submitting={customMut.isPending}
       />
     </SafeAreaView>
   );
@@ -455,8 +520,13 @@ function TemplateCard({ template, disabled, onAssign }: TemplateCardProps) {
           }
         >
           <Icon name="plus" size={16} color={colors.cream} />
-          <Typography.Body tone="onNavy" emphasis style={{ marginLeft: 6 }}>
-            Assign…
+          <Typography.Body
+            tone="onNavy"
+            emphasis
+            numberOfLines={1}
+            style={{ marginLeft: 6 }}
+          >
+            Assign
           </Typography.Body>
         </AnimatedPressable>
       </View>
@@ -709,6 +779,285 @@ function AssignSheet({
 }
 
 // =========================================================================
+// Custom mission bottom sheet
+// =========================================================================
+
+interface CustomMissionSheetProps {
+  visible: boolean;
+  children: ChildProfile[];
+  onClose: () => void;
+  onSubmit: (payload: {
+    title: string;
+    description: string;
+    traitCategory: TraitCategory;
+    xpReward: number;
+    coinReward: number;
+    heroWisdom?: string;
+    childProfileId: string;
+  }) => void;
+  submitting: boolean;
+}
+
+function CustomMissionSheet({
+  visible,
+  children,
+  onClose,
+  onSubmit,
+  submitting,
+}: CustomMissionSheetProps) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [trait, setTrait] = useState<TraitCategory | null>(null);
+  const [xp, setXp] = useState('15');
+  const [coins, setCoins] = useState('8');
+  const [wisdom, setWisdom] = useState('');
+  const [childId, setChildId] = useState<string | null>(null);
+
+  // Reset when the sheet opens/closes
+  React.useEffect(() => {
+    if (!visible) {
+      setTitle('');
+      setDescription('');
+      setTrait(null);
+      setXp('15');
+      setCoins('8');
+      setWisdom('');
+      setChildId(null);
+    }
+  }, [visible]);
+
+  const xpNum = Math.max(5, Math.min(100, parseInt(xp, 10) || 0));
+  const coinNum = Math.max(1, Math.min(50, parseInt(coins, 10) || 0));
+  const canSubmit =
+    title.trim().length > 0 &&
+    trait !== null &&
+    childId !== null &&
+    xpNum >= 5 &&
+    coinNum >= 1 &&
+    !submitting;
+
+  const handleSubmit = () => {
+    if (!canSubmit || !trait || !childId) return;
+    onSubmit({
+      title: title.trim(),
+      description: description.trim(),
+      traitCategory: trait,
+      xpReward: xpNum,
+      coinReward: coinNum,
+      heroWisdom: wisdom.trim() || undefined,
+      childProfileId: childId,
+    });
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalRoot}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={onClose} />
+        <View style={styles.sheet}>
+          <View style={styles.sheetHandle} />
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <SectionHeader
+              title="Create custom quest"
+              subtitle="Design a one-off mission for your Hero."
+            />
+
+            <View style={{ gap: spacing.md, marginTop: spacing.sm }}>
+              <View>
+                <Typography.Caption tone="secondary" style={styles.inputLabel}>
+                  Title
+                </Typography.Caption>
+                <TextInput
+                  value={title}
+                  onChangeText={(t) => setTitle(t.slice(0, 80))}
+                  placeholder="e.g. Fold the laundry"
+                  placeholderTextColor={colors.textSecondary}
+                  style={styles.textInput}
+                  maxLength={80}
+                />
+              </View>
+
+              <View>
+                <Typography.Caption tone="secondary" style={styles.inputLabel}>
+                  Description (optional)
+                </Typography.Caption>
+                <TextInput
+                  value={description}
+                  onChangeText={(t) => setDescription(t.slice(0, 200))}
+                  placeholder="A short note for your Hero"
+                  placeholderTextColor={colors.textSecondary}
+                  style={[styles.textInput, { minHeight: 60 }]}
+                  multiline
+                  maxLength={200}
+                />
+              </View>
+
+              <View>
+                <Typography.Caption tone="secondary" style={styles.inputLabel}>
+                  Trait
+                </Typography.Caption>
+                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+                  {(['STRENGTH', 'WISDOM', 'HEART'] as TraitCategory[]).map(
+                    (t) => (
+                      <Chip
+                        key={t}
+                        tone={TRAIT_TONE[t]}
+                        label={traitLabel(t)}
+                        filled={trait === t}
+                        size="md"
+                        onPress={() => setTrait(t)}
+                      />
+                    ),
+                  )}
+                </View>
+              </View>
+
+              <View style={styles.inputRow}>
+                <View style={{ flex: 1 }}>
+                  <Typography.Caption tone="secondary" style={styles.inputLabel}>
+                    XP (5–100)
+                  </Typography.Caption>
+                  <TextInput
+                    value={xp}
+                    onChangeText={(t) => setXp(t.replace(/[^0-9]/g, '').slice(0, 3))}
+                    keyboardType="number-pad"
+                    style={styles.textInput}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Typography.Caption tone="secondary" style={styles.inputLabel}>
+                    Coins (1–50)
+                  </Typography.Caption>
+                  <TextInput
+                    value={coins}
+                    onChangeText={(t) =>
+                      setCoins(t.replace(/[^0-9]/g, '').slice(0, 2))
+                    }
+                    keyboardType="number-pad"
+                    style={styles.textInput}
+                  />
+                </View>
+              </View>
+
+              <View>
+                <Typography.Caption tone="secondary" style={styles.inputLabel}>
+                  Hero wisdom (optional)
+                </Typography.Caption>
+                <TextInput
+                  value={wisdom}
+                  onChangeText={(t) => setWisdom(t.slice(0, 200))}
+                  placeholder="An encouraging note for the quest"
+                  placeholderTextColor={colors.textSecondary}
+                  style={[styles.textInput, { minHeight: 60 }]}
+                  multiline
+                  maxLength={200}
+                />
+              </View>
+
+              <View>
+                <Typography.Caption tone="secondary" style={styles.inputLabel}>
+                  Assign to
+                </Typography.Caption>
+                {children.length === 0 ? (
+                  <Banner
+                    tone="info"
+                    icon="crown"
+                    message="Add a Hero first from the Heroes tab."
+                  />
+                ) : (
+                  <View style={{ gap: spacing.sm }}>
+                    {children.map((c) => {
+                      const selected = childId === c.id;
+                      return (
+                        <AnimatedPressable
+                          key={c.id}
+                          onPress={() => setChildId(c.id)}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Assign to ${c.displayName}`}
+                        >
+                          <Surface
+                            variant={selected ? 'card' : 'cream'}
+                            padding="md"
+                            radius="lg"
+                            shadow="card"
+                          >
+                            <View style={styles.heroPickRow}>
+                              <Avatar
+                                initials={c.displayName.charAt(0)}
+                                size="md"
+                                tone="navy"
+                              />
+                              <View style={{ flex: 1, marginLeft: spacing.md }}>
+                                <Typography.Heading level={3} numberOfLines={1}>
+                                  {c.displayName}
+                                </Typography.Heading>
+                                {c.hero ? (
+                                  <Typography.Caption tone="secondary">
+                                    Level {c.hero.level} · {c.hero.coins} coins
+                                  </Typography.Caption>
+                                ) : null}
+                              </View>
+                              {selected ? (
+                                <Icon
+                                  name="checkCircle"
+                                  size={18}
+                                  color={colors.accent}
+                                />
+                              ) : null}
+                            </View>
+                          </Surface>
+                        </AnimatedPressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              <AnimatedPressable
+                onPress={handleSubmit}
+                disabled={!canSubmit}
+                accessibilityRole="button"
+                accessibilityLabel="Create and assign quest"
+                style={
+                  canSubmit
+                    ? styles.primaryBtn
+                    : [styles.primaryBtn, styles.primaryBtnDisabled]
+                }
+              >
+                <Typography.Body tone="onNavy" emphasis>
+                  {submitting ? 'Assigning…' : 'Create & assign'}
+                </Typography.Body>
+              </AnimatedPressable>
+
+              <AnimatedPressable
+                onPress={onClose}
+                style={styles.sheetCancel}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Typography.Body tone="secondary" emphasis>
+                  Cancel
+                </Typography.Body>
+              </AnimatedPressable>
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// =========================================================================
 // Styles
 // =========================================================================
 
@@ -773,12 +1122,47 @@ const styles = StyleSheet.create({
   assignBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.pill,
     backgroundColor: colors.primary,
+    minWidth: 110,
   },
   assignBtnDisabled: { opacity: 0.4 },
+  customBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.pill,
+    backgroundColor: colors.accent,
+  },
+  textInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontSize: 16,
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  inputLabel: {
+    marginBottom: 4,
+  },
+  primaryBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.pill,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    marginTop: spacing.md,
+  },
+  primaryBtnDisabled: { opacity: 0.5 },
   childHeader: {
     flexDirection: 'row',
     alignItems: 'center',

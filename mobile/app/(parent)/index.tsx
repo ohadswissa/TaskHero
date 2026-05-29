@@ -192,14 +192,22 @@ export default function ParentDashboardScreen() {
                 subtitle={familyQ.data?.name}
               />
             </View>
-            {familyQ.data?.inviteCode ? (
+            <View style={styles.headerActions}>
+              {familyQ.data?.inviteCode ? (
+                <Chip
+                  tone="navy"
+                  icon={<Icon name="crown" size={14} color={colors.cream} />}
+                  label={`Code: ${familyQ.data.inviteCode}`}
+                  onPress={copyInviteCode}
+                />
+              ) : null}
               <Chip
-                tone="navy"
-                icon={<Icon name="crown" size={14} color={colors.cream} />}
-                label={`Code: ${familyQ.data.inviteCode}`}
-                onPress={copyInviteCode}
+                tone="neutral"
+                icon={<Icon name="chevronRight" size={14} color={colors.textPrimary} />}
+                label="Settings"
+                onPress={() => router.push('/(parent)/settings')}
               />
-            ) : null}
+            </View>
           </View>
 
           {/* 2 — Trait Radar hero */}
@@ -448,6 +456,11 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   headerCopy: { flex: 1, minWidth: 0 },
+  headerActions: {
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
   heroWrap: {
     paddingHorizontal: spacing.lg,
     marginTop: spacing.md,

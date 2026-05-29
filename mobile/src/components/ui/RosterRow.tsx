@@ -97,7 +97,24 @@ export function RosterRow({
           </Caption>
         </View>
         <View style={styles.right}>
-          <OrbProgress size={28} value={creature?.happiness ?? 0} />
+          {creature ? (
+            <View style={styles.happyBlock}>
+              <OrbProgress
+                size={32}
+                value={creature.happiness}
+                showPercent={false}
+                label={null}
+              />
+              <View style={styles.happyText}>
+                <Heading level={3} style={styles.happyValue}>
+                  {Math.round(creature.happiness)}%
+                </Heading>
+                <Caption tone="secondary" style={styles.happyLabel}>
+                  happy
+                </Caption>
+              </View>
+            </View>
+          ) : null}
           {trailing !== undefined ? (
             trailing
           ) : (
@@ -133,5 +150,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+  },
+  happyBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  happyText: {
+    alignItems: 'flex-start',
+  },
+  happyValue: {
+    fontSize: 15,
+    lineHeight: 16,
+  },
+  happyLabel: {
+    fontSize: 10,
+    lineHeight: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
 });

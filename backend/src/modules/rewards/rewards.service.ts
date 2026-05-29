@@ -165,6 +165,63 @@ export class RewardsService {
   }
 
   /**
+   * Child-side: list all ACTIVE family rewards (excluding ones targeted to
+   * other children) with per-child derived progress + unlocked flag based
+   * on the reward's conditionType. Lightweight, additive endpoint used by
+   * the child Rewards screen's "More rewards to chase" shelf.
+   */
+  async getMineFamily(userId: string, familyId: string) {
+    const childProfileId = await this.resolveChildProfileId(userId);
+
+    const hero = await this.prisma.hero.findUnique({
+      where: { childProfileId },
+      select: { coins: true, totalCoinsEarned: true, currentStreak: true, level: true, totalXp: true },
+    });
+    const approvedCount = await this.prisma.missionAssignment.count({
+      where: { childProfileId, status: AssignmentStatus.APPROVED },
+    });
+
+    const rewards = await this.prisma.reward.findMany({
+      where: {
+        familyId,
+        status: RewardStatus.ACTIVE,
+        OR: [
+          { targetChildProfileId: null },
+          { targetChildProfileId: childProfileId },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return rewards.map((r) => {
+      const target = r.conditionValue;
+      let raw = 0;
+      switch (r.conditionType) {
+        case UnlockConditionType.COIN_THRESHOLD:
+          raw = hero?.coins ?? 0;
+          break;
+        case UnlockConditionType.STREAK_DAYS:
+          raw = hero?.currentStreak ?? 0;
+          break;
+        case UnlockConditionType.MISSION_COUNT:
+          raw = approvedCount;
+          break;
+        case UnlockConditionType.LEVEL_REACHED:
+          raw = hero?.level ?? 0;
+          break;
+        case UnlockConditionType.XP_THRESHOLD:
+          raw = hero?.totalXp ?? 0;
+          break;
+        default:
+          raw = 0;
+      }
+      const progress = Math.min(raw, target);
+      const unlocked = raw >= target;
+      return { ...r, progress, target, unlocked };
+    });
+  }
+
+  /**
    * Mark a reward as REDEEMED. Allowed for PARENT (real-world fulfillment)
    * or CHILD (claim flow). Requires the reward to be UNLOCKED via threshold
    * reached. Since RewardStatus has no UNLOCKED state in this schema (status

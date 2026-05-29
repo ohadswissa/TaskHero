@@ -43,6 +43,18 @@ export class RewardsController {
     return this.rewardsService.getMineActive(userId);
   }
 
+  @Get('mine/family')
+  @Roles(UserRole.CHILD)
+  @ApiOperation({
+    summary: "List family-wide ACTIVE rewards visible to the child with per-child progress",
+  })
+  async getMineFamily(
+    @CurrentUser('userId') userId: string,
+    @CurrentUser('familyId') familyId: string,
+  ) {
+    return this.rewardsService.getMineFamily(userId, familyId);
+  }
+
   @Post(':id/redeem')
   @Roles(UserRole.PARENT, UserRole.CHILD)
   @ApiOperation({ summary: 'Redeem a reward whose threshold has been reached' })

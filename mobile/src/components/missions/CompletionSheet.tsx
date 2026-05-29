@@ -12,12 +12,15 @@
  *  - Success state: parchment Surface + checkCircle + Scroll line.
  *  - Errors surface via <Banner tone="error"/>.
  */
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -65,6 +68,7 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const notesRef = useRef<TextInput>(null);
 
   function resetAndClose() {
     setState('compose');
@@ -144,10 +148,17 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
       transparent
       onRequestClose={resetAndClose}
     >
-      <View style={styles.backdrop}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.backdrop}
+      >
         <AnimatedPressable
           style={StyleSheet.absoluteFill as any}
-          onPress={() => state !== 'submitting' && resetAndClose()}
+          onPress={() => {
+            if (state === 'submitting') return;
+            Keyboard.dismiss();
+            resetAndClose();
+          }}
           haptic={null}
           accessibilityLabel="Dismiss sheet"
           accessibilityRole="button"
@@ -156,6 +167,11 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
         </AnimatedPressable>
 
         <Surface variant="cream" radius="xl" padding="lg" shadow="navyGlow" style={styles.sheet as any}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: spacing.sm }}
+          >
           <View style={styles.handle} />
 
           {state === 'compose' && (
@@ -201,6 +217,7 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
               )}
 
               <TextInput
+                ref={notesRef}
                 style={styles.notes}
                 placeholder="What did you do? (optional)"
                 placeholderTextColor={colors.textSecondary}
@@ -209,10 +226,24 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
                 value={notes}
                 onChangeText={setNotes}
                 accessibilityLabel="Notes"
+                returnKeyType="done"
+                blurOnSubmit
+                onSubmitEditing={() => Keyboard.dismiss()}
               />
-              <Caption tone="secondary" align="right" style={styles.charCount}>
-                {notes.length}/{NOTES_MAX}
-              </Caption>
+              <View style={styles.charRow}>
+                <Caption tone="secondary">
+                  {notes.length}/{NOTES_MAX}
+                </Caption>
+                <AnimatedPressable
+                  onPress={() => Keyboard.dismiss()}
+                  style={styles.kbDoneBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Done typing"
+                  haptic={null}
+                >
+                  <Caption emphasis tone="primary">Done</Caption>
+                </AnimatedPressable>
+              </View>
 
               {error && (
                 <View style={styles.bannerWrap}>
@@ -222,7 +253,10 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
 
               <View style={styles.actionRow}>
                 <AnimatedPressable
-                  onPress={resetAndClose}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    resetAndClose();
+                  }}
                   style={styles.cancelBtn}
                   accessibilityRole="button"
                   accessibilityLabel="Cancel"
@@ -230,7 +264,10 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
                   <Typography.Heading level={3} tone="secondary">Not yet</Typography.Heading>
                 </AnimatedPressable>
                 <AnimatedPressable
-                  onPress={handleSubmit}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    handleSubmit();
+                  }}
                   style={styles.submitBtn}
                   accessibilityRole="button"
                   accessibilityLabel="Submit"
@@ -276,8 +313,9 @@ export function CompletionSheet({ visible, assignmentId, onClose }: CompletionSh
               </AnimatedPressable>
             </Surface>
           )}
+          </ScrollView>
         </Surface>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -354,6 +392,20 @@ const styles = StyleSheet.create({
     borderColor: colors.borderLight,
   },
   charCount: { marginTop: 4 },
+  charRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  kbDoneBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: borderRadius.pill,
+    backgroundColor: colors.creamSoft,
+    borderWidth: 1,
+    borderColor: colors.amberSoft,
+  },
 
   bannerWrap: { marginTop: spacing.sm },
 

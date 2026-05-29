@@ -19,7 +19,6 @@ import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { Text } from 'react-native';
 import { colors, spacing, borderRadius, typographyTokens } from '@/theme';
 import { AnimatedPressable } from './AnimatedPressable';
-import { Icon } from './Icon';
 
 export type PinKeypadTone = 'onNavy' | 'onLight';
 
@@ -111,13 +110,23 @@ function Key({
       ]}
     >
       {isBack ? (
-        <Icon name="chevronLeft" size={24} color={fg} />
+        <Text
+          style={{
+            ...typographyTokens.heading1,
+            fontSize: 18,
+            lineHeight: 22,
+            color: fg,
+            letterSpacing: 0.5,
+          }}
+        >
+          DEL
+        </Text>
       ) : (
         <Text
           style={{
             ...typographyTokens.heading1,
-            fontSize: 26,
-            lineHeight: 30,
+            fontSize: 22,
+            lineHeight: 26,
             color: fg,
           }}
         >
@@ -140,8 +149,8 @@ const styles = StyleSheet.create({
   },
   key: {
     flex: 1,
-    aspectRatio: 1.2,
-    maxHeight: 68,
+    aspectRatio: 1.4,
+    maxHeight: 54,
     borderRadius: borderRadius.lg,
     alignItems: 'center',
     justifyContent: 'center',

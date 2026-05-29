@@ -13,17 +13,19 @@
  *      SUBMITTED           → <Banner tone="info" /> + spinner
  *      APPROVED            → success checkmark + amount
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { assignmentsApi, extractApiError, queryKeys } from '@/api';
+import { useMissionTimerStore } from '@/stores/missionTimerStore';
 import type { TraitCategory } from '@/api';
 import { CompletionSheet } from '@/components/missions/CompletionSheet';
 import {
@@ -32,6 +34,7 @@ import {
   Body,
   Caption,
   Chip,
+  FLOATING_TAB_BAR_HEIGHT,
   Icon,
   ScrollCard,
   SectionHeader,
@@ -78,6 +81,62 @@ function statusChip(status: string): { tone: ChipTone; label: string } | null {
 export default function MissionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [sheetOpen, setSheetOpen] = useState(false);
+  const insets = useSafeAreaInsets();
+  const ctaBottom = insets.bottom + FLOATING_TAB_BAR_HEIGHT + spacing.sm;
+
+  // Mission timer — persisted in a global zustand store so it keeps
+  // running across screen navigations and only one mission can be active
+  // at a time. Starting a new mission auto-stops any previous one.
+  const activeAssignmentId = useMissionTimerStore((s) => s.activeAssignmentId);
+  const startedAt = useMissionTimerStore((s) => s.startedAt);
+  const startTimer = useMissionTimerStore((s) => s.start);
+  const stopTimer = useMissionTimerStore((s) => s.stop);
+  const isRunning = activeAssignmentId === id && startedAt != null;
+  const [elapsed, setElapsed] = useState(() =>
+    isRunning && startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0,
+  );
+  const pulse = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!isRunning || startedAt == null) {
+      setElapsed(0);
+      return;
+    }
+    // Hydrate immediately on mount/resume so the timer shows the correct
+    // elapsed value the instant the user comes back to this screen.
+    setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    const tickId = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(tickId);
+  }, [isRunning, startedAt]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isRunning, pulse]);
+
+  function fmtElapsed(s: number) {
+    const safe = Math.max(0, Math.floor(s));
+    const m = Math.floor(safe / 60);
+    const sec = safe % 60;
+    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  }
+
+  // Estimate mission duration from title ("Spend 15 min reading") or xpReward.
+  function getDurationMinutes(m: { title?: string | null; xpReward?: number | null } | null | undefined): number {
+    if (!m) return 10;
+    const match = m.title?.match(/(\d+)\s*min/i);
+    if (match) return parseInt(match[1], 10);
+    return Math.max(3, Math.min(30, m.xpReward ?? 10));
+  }
 
   const {
     data: assignment,
@@ -89,6 +148,25 @@ export default function MissionDetailScreen() {
     queryFn: () => assignmentsApi.getAssignment(id!),
     enabled: !!id,
   });
+
+  function handleStart() {
+    if (!assignment?.id) return;
+    startTimer(assignment.id);
+    setElapsed(0);
+  }
+
+  // When the user successfully submits a mission, stop the timer.
+  useEffect(() => {
+    if (!assignment) return;
+    if (
+      assignment.id === activeAssignmentId &&
+      (assignment.status === 'SUBMITTED' ||
+        assignment.status === 'APPROVED' ||
+        assignment.status === 'REJECTED')
+    ) {
+      stopTimer();
+    }
+  }, [assignment, activeAssignmentId, stopTimer]);
 
   if (isPending) {
     return (
@@ -128,7 +206,7 @@ export default function MissionDetailScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.topBar}>
         <AnimatedPressable
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/(child)/missions'))}
+          onPress={() => router.replace('/(child)/missions')}
           accessibilityRole="button"
           accessibilityLabel="Back"
           style={styles.backBtn}
@@ -194,23 +272,58 @@ export default function MissionDetailScreen() {
           </View>
         )}
 
-        <View style={{ height: 140 }} />
+        <View style={{ height: 140 + FLOATING_TAB_BAR_HEIGHT }} />
       </ScrollView>
 
-      <View style={styles.ctaWrap}>
-        {(assignment.status === 'PENDING' || assignment.status === 'IN_PROGRESS') && (
+      <View style={[styles.ctaWrap, { bottom: ctaBottom }]}>
+        {(assignment.status === 'PENDING' || assignment.status === 'IN_PROGRESS') && !isRunning && (
           <AnimatedPressable
-            onPress={() => setSheetOpen(true)}
+            onPress={handleStart}
             accessibilityRole="button"
-            accessibilityLabel="I did it"
+            accessibilityLabel="Start mission"
             style={styles.ctaPrimary}
           >
             <Icon name="sparkle" size={18} color={colors.navyDeep} />
             <Typography.Heading level={2} tone="primary" style={styles.ctaPrimaryLabel}>
-              I did it!
+              Start mission ▶
             </Typography.Heading>
           </AnimatedPressable>
         )}
+        {(assignment.status === 'PENDING' || assignment.status === 'IN_PROGRESS') && isRunning && (() => {
+          const targetSeconds = getDurationMinutes(mission) * 60;
+          const remaining = Math.max(0, targetSeconds - elapsed);
+          const timesUp = remaining === 0;
+          const progressPct = Math.min(100, Math.round((elapsed / targetSeconds) * 100));
+          return (
+            <>
+              <Surface variant="cream" radius="lg" padding="md" shadow="card" style={styles.timerCard as any}>
+                <View style={styles.timerHeader}>
+                  <Animated.View style={[styles.pulseDot, { opacity: pulse }]} />
+                  <Caption tone="secondary" emphasis style={{ letterSpacing: 1 }}>
+                    {timesUp ? "TIME'S UP" : 'TIME LEFT'}
+                  </Caption>
+                </View>
+                <Typography.Display tone="primary" align="center" style={styles.timerValue}>
+                  {timesUp ? "Time's up! ⏰" : fmtElapsed(remaining)}
+                </Typography.Display>
+                <View style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
+                </View>
+              </Surface>
+              <AnimatedPressable
+                onPress={() => setSheetOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="I did it"
+                style={[styles.ctaPrimary, { marginTop: spacing.sm }]}
+              >
+                <Icon name="sparkle" size={18} color={colors.navyDeep} />
+                <Typography.Heading level={2} tone="primary" style={styles.ctaPrimaryLabel}>
+                  I did it! ✨
+                </Typography.Heading>
+              </AnimatedPressable>
+            </>
+          );
+        })()}
         {assignment.status === 'SUBMITTED' && (
           <Banner tone="info" message="Waiting for your parent to verify…" />
         )}
@@ -240,7 +353,7 @@ function BackBar() {
   return (
     <View style={styles.topBar}>
       <AnimatedPressable
-        onPress={() => (router.canGoBack() ? router.back() : router.replace('/(child)/missions'))}
+        onPress={() => router.replace('/(child)/missions')}
         accessibilityRole="button"
         accessibilityLabel="Back"
         style={styles.backBtn}
@@ -315,13 +428,9 @@ const styles = StyleSheet.create({
 
   ctaWrap: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    padding: spacing.lg,
-    backgroundColor: 'rgba(255, 253, 249, 0.93)',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(27, 42, 78, 0.06)',
+    left: spacing.lg,
+    right: spacing.lg,
+    paddingVertical: spacing.sm,
   },
   ctaPrimary: {
     flexDirection: 'row',
@@ -334,6 +443,39 @@ const styles = StyleSheet.create({
   },
   ctaPrimaryLabel: { fontSize: 18, color: colors.navyDeep },
 
+  timerCard: {
+    alignItems: 'center',
+  },
+  timerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  pulseDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: colors.amberDeep,
+  },
+  timerValue: {
+    fontSize: 38,
+    letterSpacing: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  progressTrack: {
+    marginTop: spacing.sm,
+    height: 6,
+    width: '100%',
+    borderRadius: 3,
+    backgroundColor: 'rgba(15,27,61,0.10)',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.amberDeep,
+    borderRadius: 3,
+  },
   approved: {
     flexDirection: 'row',
     alignItems: 'center',

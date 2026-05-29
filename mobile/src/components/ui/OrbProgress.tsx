@@ -1,11 +1,13 @@
 /**
- * OrbProgress — Polish-B1 happiness orb.
+ * OrbProgress — happiness orb (Polish-B1 + demo-prep contrast pass).
  *
  * Animated glowing sphere: clipped fill (bottom-up wave) tweens between
- * values over 600ms; outer halo opacity scales with value (≥70% bright,
- * ≤30% dim). Defaults to the amber accent — caller may override.
+ * values over 600ms. Always interpolates FROM the previous value so the
+ * orb never resets to 0 mid-update (was causing a brief white flash on
+ * happiness changes). The current percent is rendered as a bold label
+ * inside the orb for at-a-glance readability against the cream bg.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Svg, { Circle, ClipPath, Defs, G, Rect } from 'react-native-svg';
 import Animated, {
@@ -16,7 +18,7 @@ import Animated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import { colors } from '@/theme';
-import { Caption } from './Typography';
+import { Caption, Heading } from './Typography';
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -25,7 +27,10 @@ export interface OrbProgressProps {
   value: number;
   size?: number;
   color?: string;
-  label?: string;
+  /** When null/undefined no caption is rendered below the orb. */
+  label?: string | null;
+  /** When false the inner percent number is hidden (default true). */
+  showPercent?: boolean;
 }
 
 export function OrbProgress({
@@ -33,11 +38,23 @@ export function OrbProgress({
   size = 56,
   color = colors.accent,
   label,
+  showPercent = true,
 }: OrbProgressProps) {
-  const progress = useSharedValue(clamp01(value) / 100);
+  const initial = clamp01(value) / 100;
+  const progress = useSharedValue(initial);
+  // Track the previous prop value across renders so the animated fill
+  // always tweens FROM the current visual state TO the new target —
+  // never snaps to 0 (which previously caused a brief white flash).
+  const lastValueRef = useRef<number>(initial);
 
   useEffect(() => {
-    progress.value = withTiming(clamp01(value) / 100, { duration: 600 });
+    const next = clamp01(value) / 100;
+    // Ensure the shared value matches our last-known target before
+    // starting the new tween (handles edge cases where the JS-thread
+    // shared value drifted away from our ref).
+    progress.value = lastValueRef.current;
+    progress.value = withTiming(next, { duration: 600 });
+    lastValueRef.current = next;
   }, [value, progress]);
 
   const r = size / 2 - 2;
@@ -54,36 +71,54 @@ export function OrbProgress({
     r: interpolate(progress.value, [0, 1], [r + 2, r + 6], Extrapolation.CLAMP),
   }));
 
+  const pctLabel = Math.round(clamp01(value));
+
   return (
     <View style={styles.root}>
-      <Svg width={size + 16} height={size + 16}>
-        {/* halo */}
-        <AnimatedCircle
-          cx={cx + 8}
-          cy={cy + 8}
-          fill={color}
-          animatedProps={haloProps}
-        />
-        <G transform={`translate(8, 8)`}>
-          <Defs>
-            <ClipPath id="orb-clip">
-              <Circle cx={cx} cy={cy} r={r} />
-            </ClipPath>
-          </Defs>
-          {/* base */}
-          <Circle cx={cx} cy={cy} r={r} fill={colors.creamSoft} stroke={color} strokeWidth={1.5} opacity={0.6} />
-          {/* animated fill */}
-          <AnimatedRect
-            x={cx - r}
-            width={2 * r}
+      <View style={[styles.orbShadow, { width: size + 16, height: size + 16 }]}>
+        <Svg width={size + 16} height={size + 16}>
+          {/* halo */}
+          <AnimatedCircle
+            cx={cx + 8}
+            cy={cy + 8}
             fill={color}
-            clipPath="url(#orb-clip)"
-            animatedProps={fillProps}
+            animatedProps={haloProps}
           />
-          {/* highlight */}
-          <Circle cx={cx - r / 3} cy={cy - r / 3} r={r / 4} fill="rgba(255,255,255,0.6)" />
-        </G>
-      </Svg>
+          <G transform={`translate(8, 8)`}>
+            <Defs>
+              <ClipPath id="orb-clip">
+                <Circle cx={cx} cy={cy} r={r} />
+              </ClipPath>
+            </Defs>
+            {/* base track — darker navy at 12% so it reads on cream bg */}
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={r}
+              fill="rgba(15,27,61,0.12)"
+              stroke={color}
+              strokeWidth={3.5}
+            />
+            {/* animated fill */}
+            <AnimatedRect
+              x={cx - r}
+              width={2 * r}
+              fill={color}
+              clipPath="url(#orb-clip)"
+              animatedProps={fillProps}
+            />
+            {/* highlight */}
+            <Circle cx={cx - r / 3} cy={cy - r / 3} r={r / 4} fill="rgba(255,255,255,0.55)" />
+          </G>
+        </Svg>
+        {showPercent ? (
+          <View pointerEvents="none" style={styles.percentWrap}>
+            <Heading level={3} tone="primary" align="center" style={styles.percentLabel}>
+              {pctLabel}%
+            </Heading>
+          </View>
+        ) : null}
+      </View>
       {label ? (
         <Caption tone="secondary" align="center" style={styles.label}>
           {label}
@@ -100,5 +135,23 @@ function clamp01(v: number): number {
 
 const styles = StyleSheet.create({
   root: { alignItems: 'center' },
+  orbShadow: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.navyDeep,
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  percentWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  percentLabel: {
+    fontSize: 14,
+    lineHeight: 16,
+  },
   label: { marginTop: 4 },
 });

@@ -127,19 +127,24 @@ export const useAuthStore = create<AuthState>()(
 
       logout: async () => {
         const { refreshToken } = get();
-        try {
-          if (refreshToken) {
+        console.log('[signout] authStore.logout: start (hasRefresh=', !!refreshToken, ')');
+        // Flip auth state FIRST so any gates / route guards can react
+        // immediately. The backend revoke call below is best-effort and
+        // must never block the user from leaving the authed UI.
+        set({
+          isAuthenticated: false,
+          user: null,
+          accessToken: null,
+          refreshToken: null,
+        });
+        console.log('[signout] authStore.logout: state cleared');
+        if (refreshToken) {
+          try {
             await authApi.logout(refreshToken);
+            console.log('[signout] authStore.logout: backend revoke ok');
+          } catch (error) {
+            console.warn('[signout] authStore.logout: backend revoke failed', error);
           }
-        } catch (error) {
-          console.error('Logout error:', error);
-        } finally {
-          set({
-            isAuthenticated: false,
-            user: null,
-            accessToken: null,
-            refreshToken: null,
-          });
         }
       },
 

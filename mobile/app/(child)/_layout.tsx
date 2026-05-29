@@ -31,8 +31,20 @@ import { FloatingTabBar, GradientBackdrop, Icon, type IconName } from '@/compone
 export default function ChildLayout() {
   const segments = useSegments();
   const inOnboarding = (segments as readonly string[]).includes('onboarding');
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const isChild = useAuthStore((s) => s.user?.role === 'CHILD');
   const queryClient = useQueryClient();
+
+  // Logout gate: as soon as auth clears, bounce to ROOT and let
+  // app/index.tsx pick the right destination based on role. Redirecting
+  // straight into the auth group from here used to race with the explicit
+  // router.replace inside handleSignOut → competing navigations.
+  useEffect(() => {
+    if (!isAuthenticated) {
+      console.log('[signout] child _layout gate: isAuthenticated=false → /');
+      router.replace('/');
+    }
+  }, [isAuthenticated]);
 
   const {
     data: creature,
@@ -41,18 +53,19 @@ export default function ChildLayout() {
   } = useQuery({
     queryKey: queryKeys.creature.me,
     queryFn: creaturesApi.getMyCreature,
-    enabled: isChild,
+    enabled: isChild && isAuthenticated,
     staleTime: 1000 * 60,
   });
 
   // Routing gate: when creature is missing and we're not already in
   // onboarding, redirect into the origin story.
   useEffect(() => {
+    if (!isAuthenticated) return;
     if (isPending || !isChild) return;
     if (!creature && !inOnboarding) {
       router.replace('/(child)/onboarding/origin' as never);
     }
-  }, [creature, isPending, inOnboarding, isChild]);
+  }, [creature, isPending, inOnboarding, isChild, isAuthenticated]);
 
   // --------------------------------------------------------------------
   // M5b — notification polling + Hero Mail queue

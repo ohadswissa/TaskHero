@@ -70,18 +70,56 @@ export async function uploadPhotoToPresignedUrl(params: {
 
   // Read the local file as a Blob. RN's fetch supports file:// URIs out of
   // the box; on web the URI is already https/blob.
-  const fileRes = await fetch(uri);
-  if (!fileRes.ok) {
-    throw new Error(`Could not read local file (${fileRes.status})`);
+  let blob: Blob;
+  try {
+    const fileRes = await fetch(uri);
+    if (!fileRes.ok) {
+      throw new Error(`Could not read local file (${fileRes.status})`);
+    }
+    blob = await fileRes.blob();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[upload] failed to read local file', { uri, msg });
+    throw new Error(`Could not read local file: ${msg}`);
   }
-  const blob = await fileRes.blob();
 
-  const putRes = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': contentType },
-    body: blob,
-  });
+  // Diagnostic: log the host of the presigned URL — most "Network failed"
+  // errors on physical devices are because MinIO presigned a `localhost`
+  // URL that the phone can't reach over LAN.
+  try {
+    const host = uploadUrl.replace(/^https?:\/\//, '').split('/')[0];
+    console.log('[upload] PUT', host, 'size=', blob.size, 'type=', contentType);
+  } catch {
+    /* noop */
+  }
+
+  let putRes: Response;
+  try {
+    putRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: blob,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[upload] PUT failed (network)', { uploadUrl, msg });
+    throw new Error(
+      `Photo upload network error — check that the MinIO endpoint in the presigned URL is reachable from this device (got: ${uploadUrl}). Underlying: ${msg}`,
+    );
+  }
+
   if (!putRes.ok) {
+    let body = '';
+    try {
+      body = await putRes.text();
+    } catch {
+      /* noop */
+    }
+    console.warn('[upload] PUT non-2xx', {
+      status: putRes.status,
+      statusText: putRes.statusText,
+      body: body.slice(0, 300),
+    });
     const err = new Error(
       `MinIO upload failed: ${putRes.status} ${putRes.statusText}`,
     ) as Error & { status?: number };
